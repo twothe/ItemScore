@@ -1,0 +1,18 @@
+## Interface: 30300
+## Title: ItemScore
+## Notes: Gear scoring and search addon using optional LootCollector/AtlasLoot sources
+## Author: TwoThe
+## Version: 1.1
+## SavedVariables: ItemDropWatchDB, ItemScoreCacheDB
+## SavedVariablesPerCharacter: ItemScoreData
+
+ItemScoreUtil.lua
+ItemScoreSources.lua
+ItemScoreSourceLootCollector.lua
+ItemScoreSourceAtlasLoot.lua
+ItemScore.lua
+ItemScoreQuery.lua
+ItemScoreEquipment.lua
+ItemScoreUI.lua
+ItemScoreSearch.lua
+ItemDropWatch.lua
