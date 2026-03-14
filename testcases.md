@@ -25,8 +25,15 @@
 - Performance regression: toggling source options and clicking `Okay` in Interface options must not freeze the client while cache rebuild runs.
 - Performance regression: clicking `Search` must keep UI responsive while the result list is processed in background batches.
 - Regression: running search repeatedly (e.g. `Weapons` slot) must not enter an endless auto-search loop when some itemIDs never resolve via `GetItemInfo`.
+- Regression: while `Fetching...` is active, a re-entrant follow-up search that queues additional item queries must not leave the search button permanently disabled.
+- Regression: clicking `Refresh Cache Now` in options triggers only one immediate rebuild (or queues one retry only when current rebuild is busy), never two unconditional rebuilds.
+- Regression: LootCollector provider must respect per-frame `maxOps` budget even when many vendor records contain zero items.
 - Regression: if delta calculation returns sentinel/invalid extreme values for scaled items, search row must display `?` instead of large negative garbage.
 
 ## DropWatch lifecycle
 - Regression: dropped upgrade entries in `ItemDropWatch` stay fully visible for about 60 seconds, then fade out smoothly, and are removed shortly after.
 - Regression: stale `ItemDropWatchDB.items` entries from previous sessions must not persist in the window after login/reload.
+- Regression: pending GET_ITEM_INFO entries that resolve to non-upgrades must be removed from pending state to avoid unbounded growth.
+
+## Locale compatibility
+- On non-English clients, class-restricted items must still be filtered correctly (class list parsing must use localized `ITEM_CLASSES_ALLOWED` label).

@@ -179,6 +179,7 @@ function provider.StepCollect(state, addMapping, maxOps)
 					state.done = true
 					break
 				end
+				ops = ops + 1
 				state.vendorCursor = key
 				state.currentVendorItems = (vendor and vendor.vendorItems) or {}
 				state.currentVendorPlace = resolveZoneName(state.lootCollector, vendor)
@@ -187,6 +188,7 @@ function provider.StepCollect(state, addMapping, maxOps)
 			else
 				local vendorItem = state.currentVendorItems[state.currentVendorIndex]
 				if not vendorItem then
+					ops = ops + 1
 					state.currentVendorItems = nil
 					state.currentVendorPlace = nil
 					state.currentVendorSource = nil

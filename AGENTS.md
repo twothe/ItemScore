@@ -6,6 +6,8 @@
 - Preserve the additive profile-based scoring model (stat weights per profile).
 - Prefer deterministic UI and score behavior over implicit fallbacks.
 - Treat external loot providers (`LootCollector`, `AtlasLoot`) as optional; never hard-fail when absent.
+- Keep async callback dispatch reentrancy-safe (callbacks may enqueue new callbacks while running).
+- Keep background work schedulers single-shot (avoid combining immediate and queued refresh triggers for the same action).
 
 ## 2. Project Overview
 - `ItemScore` is a Lua WoW addon for a private WotLK 3.3.5a server.

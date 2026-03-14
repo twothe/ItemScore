@@ -98,7 +98,7 @@ function addon.CompareDelta(itemLink, profileName)
 		local cand = addon.CalculateScore(itemLink, profileName)
 		local rec = getProfileRecord(profileName)
 		assert(rec, "profile for " .. profileName .. " not found")
-		assert(#rec ~= 20, "profile for " .. profileName .. " has invalid content, expected 20 entries but got " .. #rec .. ": " .. tableToString(rec))
+		assert(#rec == 19, "profile for " .. profileName .. " has invalid content, expected 19 entries but got " .. #rec .. ": " .. tableToString(rec))
 		assert(slotNames, "slotNames for " .. invType .. " not found")
 		local worst = 99999999
 		for _, slotName in ipairs(slotNames) do

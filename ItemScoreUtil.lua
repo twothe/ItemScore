@@ -87,6 +87,24 @@ local armorAllowed = {
 local classCheckTip = CreateFrame("GameTooltip", "IS_ClassCheckTip", nil, "GameTooltipTemplate")
 classCheckTip:SetOwner(UIParent, "ANCHOR_NONE")
 
+local function escapeLuaPattern(text)
+	return (tostring(text or ""):gsub("([%(%)%.%%%+%-%*%?%[%]%^%$])", "%%%1"))
+end
+
+local function classListContains(classListText, localizedClassName)
+	if type(classListText) ~= "string" or type(localizedClassName) ~= "string" then
+		return false
+	end
+	local wanted = string.lower(localizedClassName)
+	for token in string.gmatch(classListText, "([^,]+)") do
+		local normalized = string.lower(strtrim(token))
+		if normalized == wanted then
+			return true
+		end
+	end
+	return false
+end
+
 function addon.CanPlayerEquip(itemLink)
 	local name, _, _, _, reqLevel, itemType, subType, _, equipLoc = GetItemInfo(itemLink)
 	if not name or equipLoc == "" then return false end
@@ -94,10 +112,13 @@ function addon.CanPlayerEquip(itemLink)
 	classCheckTip:ClearLines()
 	classCheckTip:SetHyperlink(itemLink)
 	local pLoc, pKey = UnitClass("player")
+	local localizedClassesLabel = tostring(_G.ITEM_CLASSES_ALLOWED or "Classes")
+	localizedClassesLabel = string.gsub(localizedClassesLabel, "%s*:%s*$", "")
+	local classesPattern = "^" .. escapeLuaPattern(localizedClassesLabel) .. ":?%s*(.+)"
 	for i = 2, classCheckTip:NumLines() do
 		local txt = _G["IS_ClassCheckTipTextLeft" .. i]:GetText()
-		local list = txt and txt:match("^Classes:?%s*(.+)")
-		if list and not list:find(pLoc, 1, true) then return false end
+		local list = txt and txt:match(classesPattern)
+		if list and not classListContains(list, pLoc) then return false end
 	end
 
 	if itemType == "Armor" then

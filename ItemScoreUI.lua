@@ -638,13 +638,13 @@ SourcesPanel:SetScript("OnShow", function(self)
 		self.refreshCacheBtn = U.CreateButton(self, 150, HEADER_HEIGHT, "Refresh Cache Now")
 		self.refreshCacheBtn:SetPoint("TOPLEFT", 16, y)
 		self.refreshCacheBtn:SetScript("OnClick", function()
-			if type(addon.QueueSearchCacheRefresh) == "function" then
-				addon.QueueSearchCacheRefresh("options:manual_refresh")
-				if type(addon.RefreshSearchCache) == "function" then
-					addon.RefreshSearchCache(true, false)
+			if type(addon.RefreshSearchCache) == "function" then
+				local started, reason = addon.RefreshSearchCache(true, false)
+				if not started and reason == "busy" and type(addon.QueueSearchCacheRefresh) == "function" then
+					addon.QueueSearchCacheRefresh("options:manual_refresh_busy")
 				end
-			elseif type(addon.RefreshSearchCache) == "function" then
-				addon.RefreshSearchCache(true, false)
+			elseif type(addon.QueueSearchCacheRefresh) == "function" then
+				addon.QueueSearchCacheRefresh("options:manual_refresh")
 			else
 				print("|cffff7f00ItemScore:|r source manager unavailable.")
 			end

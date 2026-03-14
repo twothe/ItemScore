@@ -24,8 +24,17 @@ driver:SetScript("OnUpdate", function(_, elapsed)
 		if (searchTimeWaitAfter <= 0) then
 			isSearching = false
 			driver:Hide()
-			for _, cb in ipairs(listeners) do cb() end
-			wipe(listeners)
+			if #listeners > 0 then
+				-- Swap listener table before callbacks to keep re-entrant registrations.
+				local pendingListeners = listeners
+				listeners = {}
+				for _, cb in ipairs(pendingListeners) do
+					local ok, err = pcall(cb)
+					if not ok and type(geterrorhandler) == "function" then
+						geterrorhandler()(err)
+					end
+				end
+			end
 		end
 	else
 		local id = table.remove(queue, 1)

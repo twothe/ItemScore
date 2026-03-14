@@ -281,13 +281,24 @@ local function initDB()
 	pruneExpiredItems(time(), GetTime())
 end
 
-frame:SetScript("OnEvent", function(_, event, msg)
+frame:SetScript("OnEvent", function(_, event, arg1, arg2)
 	if event == "CHAT_MSG_LOOT" then
-		local link = msg:match("|Hitem:%d+.-|h%[.-%]|h")
+		local lootMessage = tostring(arg1 or "")
+		local link = lootMessage:match("|Hitem:%d+.-|h%[.-%]|h")
 		if link then push(link) end
 	elseif event == "GET_ITEM_INFO_RECEIVED" then
-		local itemID = msg
-		for link in pairs(pending) do if link:match("item:" .. itemID .. ":") then if isUpgrade(link) and actuallyInsert(link) then pending[link] = nil end end end
+		local itemID = tonumber(arg1)
+		if not itemID then return end
+		for link in pairs(pending) do
+			if link:match("item:" .. itemID .. ":") then
+				local upgrade = isUpgrade(link)
+				if upgrade == false or arg2 == false then
+					pending[link] = nil
+				elseif upgrade and actuallyInsert(link) then
+					pending[link] = nil
+				end
+			end
+		end
 	elseif event == "PLAYER_LOGIN" then
 		initDB()
 		setCapacityByHeight(frame:GetHeight())
