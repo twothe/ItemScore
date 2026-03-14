@@ -1,0 +1,153 @@
+name: Build Addon Release
+
+on:
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - ItemScore.toc
+
+jobs:
+  check_version:
+    runs-on: ubuntu-latest
+    outputs:
+      bumped: ${{ steps.version_check.outputs.bumped }}
+      version: ${{ steps.version_check.outputs.version }}
+      previous_version: ${{ steps.version_check.outputs.previous_version }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check if TOC version increased
+        id: version_check
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          extract_version() {
+            local toc_file="$1"
+            local version
+            version="$(awk -F': *' '/^##[[:space:]]*Version[[:space:]]*:/ { print $2; exit }' "${toc_file}" | tr -d '\r')"
+            if [ -z "${version}" ]; then
+              echo "::error::No '## Version:' entry found in ${toc_file}."
+              exit 1
+            fi
+            echo "${version}"
+          }
+
+          is_newer_version() {
+            local old_version="$1"
+            local new_version="$2"
+
+            if [ "${new_version}" = "${old_version}" ]; then
+              return 1
+            fi
+
+            local highest
+            highest="$(printf '%s\n%s\n' "${old_version}" "${new_version}" | sort -V | tail -n1)"
+            [ "${highest}" = "${new_version}" ]
+          }
+
+          new_version="$(extract_version ItemScore.toc)"
+          before_sha="${{ github.event.before }}"
+
+          previous_version=""
+          bumped="false"
+
+          if [ -z "${before_sha}" ] || [ "${before_sha}" = "0000000000000000000000000000000000000000" ]; then
+            bumped="true"
+          elif git cat-file -e "${before_sha}:ItemScore.toc" 2>/dev/null; then
+            git show "${before_sha}:ItemScore.toc" > /tmp/previous_ItemScore.toc
+            previous_version="$(extract_version /tmp/previous_ItemScore.toc)"
+
+            if is_newer_version "${previous_version}" "${new_version}"; then
+              bumped="true"
+            fi
+          else
+            bumped="true"
+          fi
+
+          echo "Detected TOC version: ${new_version}"
+          if [ -n "${previous_version}" ]; then
+            echo "Previous TOC version: ${previous_version}"
+          else
+            echo "Previous TOC version: <none>"
+          fi
+          echo "Version bumped: ${bumped}"
+
+          echo "version=${new_version}" >> "${GITHUB_OUTPUT}"
+          echo "previous_version=${previous_version}" >> "${GITHUB_OUTPUT}"
+          echo "bumped=${bumped}" >> "${GITHUB_OUTPUT}"
+
+  release:
+    runs-on: ubuntu-latest
+    needs: check_version
+    if: needs.check_version.outputs.bumped == 'true'
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build release ZIP (addon runtime files only)
+        id: package
+        shell: bash
+        env:
+          RELEASE_VERSION: ${{ needs.check_version.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          package_root="dist/ItemScore"
+          archive_name="ItemScore-v${RELEASE_VERSION}.zip"
+
+          mkdir -p "${package_root}"
+          cp ItemScore.toc "${package_root}/"
+
+          while IFS= read -r raw_line; do
+            file_path="$(echo "${raw_line}" | sed -E 's/\r$//; s/^[[:space:]]+//; s/[[:space:]]+$//')"
+
+            if [ -z "${file_path}" ]; then
+              continue
+            fi
+
+            if [ ! -f "${file_path}" ]; then
+              echo "::error::File listed in ItemScore.toc not found: ${file_path}"
+              exit 1
+            fi
+
+            target_dir="${package_root}/$(dirname "${file_path}")"
+            mkdir -p "${target_dir}"
+            cp "${file_path}" "${target_dir}/"
+          done < <(awk '
+            /^[[:space:]]*$/ { next }
+            /^[[:space:]]*#/ { next }
+            { print }
+          ' ItemScore.toc)
+
+          (
+            cd dist
+            zip -r "../${archive_name}" "ItemScore"
+          )
+
+          echo "archive_name=${archive_name}" >> "${GITHUB_OUTPUT}"
+          echo "archive_path=${archive_name}" >> "${GITHUB_OUTPUT}"
+
+      - name: Upload ZIP artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.package.outputs.archive_name }}
+          path: ${{ steps.package.outputs.archive_path }}
+
+      - name: Create or update GitHub Release
+        uses: ncipollo/release-action@v1
+        with:
+          tag: v${{ needs.check_version.outputs.version }}
+          name: ItemScore v${{ needs.check_version.outputs.version }}
+          artifacts: ${{ steps.package.outputs.archive_path }}
+          allowUpdates: true
+          replacesArtifacts: true
+          generateReleaseNotes: true
+          artifactErrorsFailBuild: true

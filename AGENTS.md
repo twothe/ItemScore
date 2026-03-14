@@ -21,6 +21,7 @@
 
 ## 3. Documentation Index
 - [`./docs/loot-source-integration-plan.md`](./docs/loot-source-integration-plan.md): implemented architecture for runtime loot sources, provider filters, and cache refresh behavior.
+- [`./docs/github-release-workflow.md`](./docs/github-release-workflow.md): GitHub Actions release packaging flow, TOC version bump gating, and artifact composition rules.
 - Recommended next docs:
 	- `./docs/scoring-model.md`: formal score and upgrade-delta rules.
 	- `./docs/ui-map.md`: slash commands and frame interactions.
