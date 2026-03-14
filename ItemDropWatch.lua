@@ -1,7 +1,9 @@
 local addonName, addon = ...
 
 local ROW_H, PAD = 20, 16
-local EXPIRE_SECONDS = 120 -- 2 minutes
+local FULL_VISIBILITY_SECONDS = 60
+local FADE_SECONDS = 3
+local EXPIRE_SECONDS = FULL_VISIBILITY_SECONDS + FADE_SECONDS
 
 ItemDropWatchDB = ItemDropWatchDB or {
 	count = 0,
@@ -119,11 +121,32 @@ local function makeRow(index)
 end
 for i = 1, 3 do makeRow(i) end
 
+local function getItemAgeSeconds(item, now, nowUptime)
+	local uptime = tonumber(item and (item.uptime or item.time))
+	if uptime and uptime >= 0 and nowUptime and nowUptime >= uptime then
+		return nowUptime - uptime
+	end
+
+	local timestamp = tonumber(item and item.timestamp)
+	if not timestamp or timestamp <= 0 then return math.huge end
+	local age = now - timestamp
+	if age < 0 then return math.huge end
+	return age
+end
+
+local function getRowAlpha(ageSeconds)
+	if ageSeconds <= FULL_VISIBILITY_SECONDS then return 1 end
+	if ageSeconds >= EXPIRE_SECONDS then return 0 end
+	return (EXPIRE_SECONDS - ageSeconds) / FADE_SECONDS
+end
+
 ------------------------------------------------------------------------
 --  UI Refresh
 ------------------------------------------------------------------------
-local function refresh()
+local function refresh(now)
 	local maxRows = ItemDropWatchDB.count
+	local currentTime = now or time()
+	local currentUptime = GetTime()
 	for i = #rows + 1, maxRows do makeRow(i) end
 
 	for i = 1, maxRows do
@@ -132,13 +155,18 @@ local function refresh()
 			rows[i].icon:SetTexture(item.icon)
 			rows[i].text:SetText(rarityColors[item.rarity] .. item.name .. "|r")
 			rows[i].link = item.link
+			rows[i]:SetAlpha(getRowAlpha(getItemAgeSeconds(item, currentTime, currentUptime)))
 			rows[i]:Show()
 		else
 			rows[i]:Hide()
+			rows[i]:SetAlpha(1)
 			rows[i].link = nil
 		end
 	end
-	for i = maxRows + 1, #rows do rows[i]:Hide() end
+	for i = maxRows + 1, #rows do
+		rows[i]:Hide()
+		rows[i]:SetAlpha(1)
+	end
 end
 
 local function setCapacityByHeight(h)
@@ -169,7 +197,8 @@ local function actuallyInsert(link)
 		icon = icon,
 		rarity = rarity,
 		link = link,
-		time = GetTime()
+		timestamp = time(),
+		uptime = GetTime()
 	})
 	refresh()
 	return true
@@ -188,21 +217,43 @@ end
 ------------------------------------------------------------------------
 --  Expiration & OnUpdate
 ------------------------------------------------------------------------
-local accumulator = 0
-frame:SetScript("OnUpdate", function(_, elapsed)
-	accumulator = accumulator + elapsed
-	if accumulator < 1 then return end
-	accumulator = 0
-
-	local now = GetTime()
+local function pruneExpiredItems(now, nowUptime)
 	local changed = false
 	for i = #ItemDropWatchDB.items, 1, -1 do
-		if now - (ItemDropWatchDB.items[i].time or 0) > EXPIRE_SECONDS then
+		if getItemAgeSeconds(ItemDropWatchDB.items[i], now, nowUptime) >= EXPIRE_SECONDS then
 			table.remove(ItemDropWatchDB.items, i)
 			changed = true
 		end
 	end
-	if changed then refresh() end
+	return changed
+end
+
+local fadeAccumulator = 0
+local pruneAccumulator = 0
+frame:SetScript("OnUpdate", function(_, elapsed)
+	if #ItemDropWatchDB.items == 0 then return end
+
+	fadeAccumulator = fadeAccumulator + elapsed
+	pruneAccumulator = pruneAccumulator + elapsed
+	if fadeAccumulator < 0.2 and pruneAccumulator < 1 then return end
+
+	local now = time()
+	local nowUptime = GetTime()
+	local changed = false
+	if pruneAccumulator >= 1 then
+		pruneAccumulator = 0
+		changed = pruneExpiredItems(now, nowUptime)
+	end
+	if changed or fadeAccumulator >= 0.2 then
+		fadeAccumulator = 0
+		refresh(now)
+	end
+end)
+
+frame:SetScript("OnShow", function()
+	local now = time()
+	pruneExpiredItems(now, GetTime())
+	refresh(now)
 end)
 
 ------------------------------------------------------------------------
@@ -211,6 +262,23 @@ end)
 local function initDB()
 	if not ItemDropWatchDB then ItemDropWatchDB = {} end
 	for k, v in pairs(defaults) do if ItemDropWatchDB[k] == nil then ItemDropWatchDB[k] = v end end
+	if type(ItemDropWatchDB.items) ~= "table" then ItemDropWatchDB.items = {} end
+
+	for i = #ItemDropWatchDB.items, 1, -1 do
+		local item = ItemDropWatchDB.items[i]
+		if type(item) ~= "table" then
+			table.remove(ItemDropWatchDB.items, i)
+		elseif item.timestamp == nil then
+			local legacyTime = tonumber(item.time)
+			if legacyTime and legacyTime > 1000000000 then
+				item.timestamp = math.floor(legacyTime)
+			else
+				item.timestamp = 0
+			end
+		end
+	end
+
+	pruneExpiredItems(time(), GetTime())
 end
 
 frame:SetScript("OnEvent", function(_, event, msg)
@@ -248,6 +316,6 @@ SlashCmdList["ITEMDROPWATCH"] = function(cmd)
 		print("/idw show   – show window")
 		print("/idw hide   – hide window")
 		print("/idw clear  – clear current list")
-		print("Only items that are real upgrades for your character are displayed. They vanish automatically after 2 minutes.")
+		print("Only items that are real upgrades for your character are displayed. They start fading after about 1 minute and are then removed.")
 	end
 end
