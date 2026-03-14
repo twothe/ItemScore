@@ -2,7 +2,7 @@
 ## Title: ItemScore
 ## Notes: Gear scoring and search addon using optional LootCollector/AtlasLoot sources
 ## Author: TwoThe
-## Version: 1.1
+## Version: 2.0
 ## SavedVariables: ItemDropWatchDB, ItemScoreCacheDB
 ## SavedVariablesPerCharacter: ItemScoreData
 
