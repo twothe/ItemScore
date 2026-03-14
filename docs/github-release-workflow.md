@@ -10,8 +10,12 @@
 
 ## Trigger and Gate
 - Trigger: push to `main` or `master` when `ItemScore.toc` changes.
+- Additional trigger: manual run via `workflow_dispatch`.
 - Gate: compare current `## Version:` against the version from the pre-push commit (`github.event.before`).
 - Release job runs only when current version is strictly higher (`sort -V` comparison).
+- Manual fallback: if no push baseline is available, compare against latest tag matching `v*`.
+- If no `v*` tag exists yet, the first manual run is allowed.
+- Optional manual override: `force_release=true` skips version-bump gating.
 
 ## Packaging Rules
 - Package root inside ZIP: `ItemScore/`.
