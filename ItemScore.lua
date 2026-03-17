@@ -13,6 +13,31 @@ local ARMOR_TYPE_FILTER_KEYS = {
 	plate = true,
 }
 local ARMOR_TYPE_FILTER_ORDER = { "cloth", "leather", "mail", "plate" }
+local WEAPON_TYPE_FILTER_KEYS = {
+	one_hand_axe = true,
+	one_hand_mace = true,
+	one_hand_sword = true,
+	dagger = true,
+	fist_weapon = true,
+	two_hand_axe = true,
+	two_hand_mace = true,
+	two_hand_sword = true,
+	polearm = true,
+	staff = true,
+	shield = true,
+	off_hand = true,
+	bow = true,
+	gun = true,
+	crossbow = true,
+	thrown = true,
+	wand = true,
+}
+local WEAPON_TYPE_FILTER_ORDER = {
+	"one_hand_axe", "one_hand_mace", "one_hand_sword", "dagger", "fist_weapon",
+	"two_hand_axe", "two_hand_mace", "two_hand_sword", "polearm", "staff",
+	"shield", "off_hand",
+	"bow", "gun", "crossbow", "thrown", "wand",
+}
 
 --------------------------------------------------
 -- Data Handling
@@ -32,6 +57,20 @@ local function normalizeArmorTypeFilter(filterTable)
 	return normalized
 end
 
+local function normalizeWeaponTypeFilter(filterTable)
+	if type(filterTable) ~= "table" then
+		return {}
+	end
+
+	local normalized = {}
+	for _, weaponTypeKey in ipairs(WEAPON_TYPE_FILTER_ORDER) do
+		if filterTable[weaponTypeKey] then
+			normalized[weaponTypeKey] = true
+		end
+	end
+	return normalized
+end
+
 local function normalizeProfile(profile)
 	if type(profile.weights) ~= "table" then
 		profile.weights = {}
@@ -43,6 +82,7 @@ local function normalizeProfile(profile)
 		profile.collapsed = false
 	end
 	profile.armorTypeFilter = normalizeArmorTypeFilter(profile.armorTypeFilter)
+	profile.weaponTypeFilter = normalizeWeaponTypeFilter(profile.weaponTypeFilter)
 end
 
 local function ensureData()
@@ -54,6 +94,7 @@ local function ensureData()
 				enabled = true,
 				collapsed = false,
 				armorTypeFilter = {},
+				weaponTypeFilter = {},
 			}
 		}
 		ItemScoreData.order = {"DPS"}
@@ -78,6 +119,7 @@ local function getProfile(name)
 			enabled = true,
 			collapsed = false,
 			armorTypeFilter = {},
+			weaponTypeFilter = {},
 		}
 		table.insert(ItemScoreData.order, name)
 	end
@@ -96,6 +138,7 @@ function addon.AddProfile(name)
 		enabled = true,
 		collapsed = false,
 		armorTypeFilter = {},
+		weaponTypeFilter = {},
 	}
 	table.insert(ItemScoreData.order, name)
 	return true
@@ -178,6 +221,41 @@ function addon.SetProfileArmorTypeEnabled(profileName, armorTypeKey, enabled)
 		filter[armorTypeKey] = true
 	else
 		filter[armorTypeKey] = nil
+	end
+	return true
+end
+
+function addon.GetProfileWeaponTypeFilterState(profileName)
+	local profile = getProfile(profileName)
+	local filter = profile.weaponTypeFilter or {}
+	local selected = {}
+	local hasFilter = false
+	for _, weaponTypeKey in ipairs(WEAPON_TYPE_FILTER_ORDER) do
+		if filter[weaponTypeKey] then
+			selected[weaponTypeKey] = true
+			hasFilter = true
+		end
+	end
+	return hasFilter, selected
+end
+
+function addon.SetProfileWeaponTypeEnabled(profileName, weaponTypeKey, enabled)
+	if not WEAPON_TYPE_FILTER_KEYS[weaponTypeKey] then
+		return false
+	end
+
+	local profile = getProfile(profileName)
+	local filter = profile.weaponTypeFilter
+	local oldValue = filter[weaponTypeKey] and true or false
+	local newValue = enabled and true or false
+	if oldValue == newValue then
+		return false
+	end
+
+	if newValue then
+		filter[weaponTypeKey] = true
+	else
+		filter[weaponTypeKey] = nil
 	end
 	return true
 end

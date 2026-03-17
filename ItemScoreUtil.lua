@@ -70,6 +70,79 @@ function addon.NormalizeArmorType(itemType, subType)
 	return ARMOR_TYPE_LOOKUP[normalized]
 end
 
+local WEAPON_TYPE_DEFS = {
+	{ key = "one_hand_axe", labelGlobal = "ITEM_SUBCLASS_WEAPON_AXE", fallback = "One-Handed Axes" },
+	{ key = "one_hand_mace", labelGlobal = "ITEM_SUBCLASS_WEAPON_MACE", fallback = "One-Handed Maces" },
+	{ key = "one_hand_sword", labelGlobal = "ITEM_SUBCLASS_WEAPON_SWORD", fallback = "One-Handed Swords" },
+	{ key = "dagger", labelGlobal = "ITEM_SUBCLASS_WEAPON_DAGGER", fallback = "Daggers" },
+	{ key = "fist_weapon", labelGlobal = "ITEM_SUBCLASS_WEAPON_FIST", fallback = "Fist Weapons" },
+	{ key = "two_hand_axe", labelGlobal = "ITEM_SUBCLASS_WEAPON_AXE2", fallback = "Two-Handed Axes" },
+	{ key = "two_hand_mace", labelGlobal = "ITEM_SUBCLASS_WEAPON_MACE2", fallback = "Two-Handed Maces" },
+	{ key = "two_hand_sword", labelGlobal = "ITEM_SUBCLASS_WEAPON_SWORD2", fallback = "Two-Handed Swords" },
+	{ key = "polearm", labelGlobal = "ITEM_SUBCLASS_WEAPON_POLEARM", fallback = "Polearms" },
+	{ key = "staff", labelGlobal = "ITEM_SUBCLASS_WEAPON_STAFF", fallback = "Staves" },
+	{ key = "shield", labelGlobal = "ITEM_SUBCLASS_ARMOR_SHIELD", fallback = "Shields", invType = "INVTYPE_SHIELD" },
+	{ key = "off_hand", labelGlobal = "INVTYPE_HOLDABLE", fallback = "Held In Off-Hand", invType = "INVTYPE_HOLDABLE" },
+	{ key = "bow", labelGlobal = "ITEM_SUBCLASS_WEAPON_BOW", fallback = "Bows" },
+	{ key = "gun", labelGlobal = "ITEM_SUBCLASS_WEAPON_GUN", fallback = "Guns" },
+	{ key = "crossbow", labelGlobal = "ITEM_SUBCLASS_WEAPON_CROSSBOW", fallback = "Crossbows" },
+	{ key = "thrown", labelGlobal = "ITEM_SUBCLASS_WEAPON_THROWN", fallback = "Thrown" },
+	{ key = "wand", labelGlobal = "ITEM_SUBCLASS_WEAPON_WAND", fallback = "Wands" },
+}
+
+local function toLookupKey(value)
+	local text = strtrim(tostring(value or ""))
+	if text == "" then return nil end
+	return string.lower(text)
+end
+
+local WEAPON_SUBTYPE_LOOKUP = {}
+local WEAPON_INVTYPE_LOOKUP = {}
+for _, def in ipairs(WEAPON_TYPE_DEFS) do
+	local localized = _G[def.labelGlobal]
+	local localizedKey = toLookupKey(localized)
+	if localizedKey then
+		WEAPON_SUBTYPE_LOOKUP[localizedKey] = def.key
+	end
+	local fallbackKey = toLookupKey(def.fallback)
+	if fallbackKey then
+		WEAPON_SUBTYPE_LOOKUP[fallbackKey] = def.key
+	end
+	if def.invType then
+		WEAPON_INVTYPE_LOOKUP[def.invType] = def.key
+	end
+end
+
+function addon.GetWeaponTypeOptions()
+	local result = {}
+	for _, def in ipairs(WEAPON_TYPE_DEFS) do
+		local label = _G[def.labelGlobal] or def.fallback
+		result[#result + 1] = {
+			key = def.key,
+			label = label,
+		}
+	end
+	return result
+end
+
+function addon.IsWeaponTypeFilterRelevant(itemType, invType)
+	if invType == "INVTYPE_SHIELD" or invType == "INVTYPE_HOLDABLE" then
+		return true
+	end
+	return itemType == "Weapon"
+end
+
+function addon.NormalizeWeaponType(itemType, subType, invType)
+	local keyByInvType = WEAPON_INVTYPE_LOOKUP[invType]
+	if keyByInvType then
+		return keyByInvType
+	end
+	if itemType ~= "Weapon" then return nil end
+	local normalizedSubType = toLookupKey(subType)
+	if not normalizedSubType then return nil end
+	return WEAPON_SUBTYPE_LOOKUP[normalizedSubType]
+end
+
 local armorAllowed = {
 	WARRIOR = {
 		Cloth = true,

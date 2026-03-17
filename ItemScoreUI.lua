@@ -27,7 +27,7 @@ local STAT_GROUPS = {{
 	keys = {"ITEM_MOD_ATTACK_POWER_SHORT", "ITEM_MOD_RANGED_ATTACK_POWER_SHORT", "ITEM_MOD_SPELL_POWER_SHORT"}
 }, {
 	label = "Ratings",
-	keys = {"ITEM_MOD_HASTE_RATING_SHORT", "ITEM_MOD_CRIT_RATING_SHORT", "ITEM_MOD_HIT_RATING_SHORT", "ITEM_MOD_EXPERTISE_RATING_SHORT", "ITEM_MOD_ARMOR_PENETRATION_RATING_SHORT", "ITEM_MOD_DEFENSE_SKILL_RATING_SHORT",
+	keys = {"ITEM_MOD_HASTE_RATING_SHORT", "ITEM_MOD_CRIT_RATING_SHORT", "ITEM_MOD_HIT_RATING_SHORT", "ITEM_MOD_EXPERTISE_RATING_SHORT", "ITEM_MOD_ARMOR_PENETRATION_RATING_SHORT", "ITEM_MOD_SPELL_PENETRATION_SHORT", "ITEM_MOD_DEFENSE_SKILL_RATING_SHORT",
          "ITEM_MOD_DODGE_RATING_SHORT", "ITEM_MOD_PARRY_RATING_SHORT", "ITEM_MOD_RESILIENCE_RATING_SHORT"}
 }}
 
@@ -149,6 +149,7 @@ function ProfileComponent:buildStats()
 	local y = 0
 	self.fields = {}
 	self.armorTypeChecks = {}
+	self.weaponTypeChecks = {}
 	for _, group in ipairs(STAT_GROUPS) do
 		local groupLabel = self.statsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
 		groupLabel:SetPoint("TOPLEFT", STAT_FIRST_COL_X, y)
@@ -233,6 +234,48 @@ function ProfileComponent:buildStats()
 		y = y - 18
 	end
 
+	local weaponTypeOptions = {}
+	if type(addon.GetWeaponTypeOptions) == "function" then
+		weaponTypeOptions = addon.GetWeaponTypeOptions()
+	end
+
+	if #weaponTypeOptions > 0 then
+		local weaponTypeLabel = self.statsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+		weaponTypeLabel:SetPoint("TOPLEFT", STAT_FIRST_COL_X, y)
+		weaponTypeLabel:SetText("Search Weapon Type Filter")
+		weaponTypeLabel:Show()
+		y = y - 18
+
+		local col = 0
+		for _, option in ipairs(weaponTypeOptions) do
+			local container = CreateFrame("Frame", nil, self.statsFrame)
+			container:SetSize(220, STAT_FIELD_HEIGHT)
+			container:SetPoint("TOPLEFT", (col == 0) and STAT_FIRST_COL_X or STAT_SECOND_COL_X, y)
+			container:Show()
+
+			local check = U.CreateCheckButton(container, option.label)
+			check:SetPoint("LEFT", 0, 0)
+			check:SetScript("OnClick", function(btn)
+				addon.SetProfileWeaponTypeEnabled(self.profileName, option.key, btn:GetChecked())
+			end)
+			check:Show()
+
+			container.checkbox = check
+			container.weaponTypeKey = option.key
+			self.weaponTypeChecks[#self.weaponTypeChecks + 1] = container
+
+			col = 1 - col
+			if col == 0 then y = y - STAT_FIELD_HEIGHT end
+		end
+		if col == 1 then y = y - STAT_FIELD_HEIGHT end
+
+		local weaponTypeHint = self.statsFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+		weaponTypeHint:SetPoint("TOPLEFT", STAT_FIRST_COL_X, y)
+		weaponTypeHint:SetText("None selected = do not filter weapon types in search")
+		weaponTypeHint:Show()
+		y = y - 18
+	end
+
 	local statsHeight = -y
 	self.statsFrame:SetHeight(statsHeight)
 	self.totalHeight = statsHeight + HEADER_HEIGHT
@@ -252,6 +295,12 @@ function ProfileComponent:buildStats()
 	for _, armorTypeContainer in ipairs(self.armorTypeChecks or {}) do
 		local checked = armorFilter[armorTypeContainer.armorTypeKey] and true or false
 		armorTypeContainer.checkbox:SetChecked(checked)
+	end
+
+	local weaponFilter = (self.profileData and self.profileData.weaponTypeFilter) or {}
+	for _, weaponTypeContainer in ipairs(self.weaponTypeChecks or {}) do
+		local checked = weaponFilter[weaponTypeContainer.weaponTypeKey] and true or false
+		weaponTypeContainer.checkbox:SetChecked(checked)
 	end
 end
 
@@ -280,6 +329,11 @@ function ProfileComponent:refresh()
 		for _, armorTypeContainer in ipairs(self.armorTypeChecks or {}) do
 			local checked = armorFilter[armorTypeContainer.armorTypeKey] and true or false
 			armorTypeContainer.checkbox:SetChecked(checked)
+		end
+		local weaponFilter = self.profileData.weaponTypeFilter or {}
+		for _, weaponTypeContainer in ipairs(self.weaponTypeChecks or {}) do
+			local checked = weaponFilter[weaponTypeContainer.weaponTypeKey] and true or false
+			weaponTypeContainer.checkbox:SetChecked(checked)
 		end
 		self.statsFrame:Show()
 		local newHeight = self.statsFrame:GetHeight() + HEADER_HEIGHT

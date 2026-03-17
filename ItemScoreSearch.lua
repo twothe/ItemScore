@@ -336,6 +336,16 @@ local function getArmorTypeFilterForProfile(profileName)
 	return false, {}
 end
 
+local function getWeaponTypeFilterForProfile(profileName)
+	if type(addon.GetProfileWeaponTypeFilterState) == "function" then
+		local hasFilter, selectedTypes = addon.GetProfileWeaponTypeFilterState(profileName)
+		if hasFilter and type(selectedTypes) == "table" then
+			return true, selectedTypes
+		end
+	end
+	return false, {}
+end
+
 local function isArmorTypeFilterExemptSlot(invType)
 	return invType == "INVTYPE_CLOAK"
 end
@@ -585,7 +595,18 @@ local function processSearchTask(state, maxOps)
 				end
 			end
 
-			if not blockedByArmorType and not (state.maxRequiredLevel > 0 and reqLevel > state.maxRequiredLevel) then
+			local blockedByWeaponType = false
+			if state.hasWeaponTypeFilter and type(addon.IsWeaponTypeFilterRelevant) == "function" and addon.IsWeaponTypeFilterRelevant(itemType, invType) then
+				local weaponTypeKey = nil
+				if type(addon.NormalizeWeaponType) == "function" then
+					weaponTypeKey = addon.NormalizeWeaponType(itemType, subType, invType)
+				end
+				if not weaponTypeKey or not state.weaponTypeFilter[weaponTypeKey] then
+					blockedByWeaponType = true
+				end
+			end
+
+			if not blockedByArmorType and not blockedByWeaponType and not (state.maxRequiredLevel > 0 and reqLevel > state.maxRequiredLevel) then
 				local itemLink = link or raw
 				if addon.CanPlayerEquip(itemLink) then
 					local score = addon.CalculateScore(itemLink, state.profileName)
@@ -685,6 +706,7 @@ local function startSearchTask(profileName, slotLabel, catalog)
 	local settings = getSourceSettingsSafe()
 	local maxRequiredLevel = normalizeMaxRequiredLevel(settings.searchMaxRequiredLevel)
 	local hasArmorTypeFilter, armorTypeFilter = getArmorTypeFilterForProfile(profileName)
+	local hasWeaponTypeFilter, weaponTypeFilter = getWeaponTypeFilterForProfile(profileName)
 	if not settings.searchUseMaxRequiredLevel then
 		maxRequiredLevel = 0
 	end
@@ -702,6 +724,8 @@ local function startSearchTask(profileName, slotLabel, catalog)
 		maxRequiredLevel = maxRequiredLevel,
 		hasArmorTypeFilter = hasArmorTypeFilter,
 		armorTypeFilter = armorTypeFilter,
+		hasWeaponTypeFilter = hasWeaponTypeFilter,
+		weaponTypeFilter = weaponTypeFilter,
 		results = {},
 		isUpgradeSearch = slotLabel == "Upgrades",
 	}
