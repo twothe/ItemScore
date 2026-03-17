@@ -326,6 +326,20 @@ local function getSourceSettingsSafe()
 	return {}
 end
 
+local function getArmorTypeFilterForProfile(profileName)
+	if type(addon.GetProfileArmorTypeFilterState) == "function" then
+		local hasFilter, selectedTypes = addon.GetProfileArmorTypeFilterState(profileName)
+		if hasFilter and type(selectedTypes) == "table" then
+			return true, selectedTypes
+		end
+	end
+	return false, {}
+end
+
+local function isArmorTypeFilterExemptSlot(invType)
+	return invType == "INVTYPE_CLOAK"
+end
+
 local function queueRefreshSafe(reason)
 	if type(addon.QueueSearchCacheRefresh) == "function" then
 		addon.QueueSearchCacheRefresh(reason)
@@ -557,13 +571,21 @@ local function processSearchTask(state, maxOps)
 		ops = ops + 1
 
 		local raw = "item:" .. itemID .. ":::::::::"
-		local name, link, rarity, _, requiredLevel, _, _, _, invType, icon = GetItemInfo(raw)
+		local name, link, rarity, _, requiredLevel, itemType, subType, _, invType, icon = GetItemInfo(raw)
 		if not name then
 			ItemScoreQuery.Add(itemID)
 			state.missingItemInfo = true
 		else
 			local reqLevel = tonumber(requiredLevel) or 0
-			if not (state.maxRequiredLevel > 0 and reqLevel > state.maxRequiredLevel) then
+			local blockedByArmorType = false
+			if state.hasArmorTypeFilter and type(addon.NormalizeArmorType) == "function" then
+				local armorTypeKey = addon.NormalizeArmorType(itemType, subType)
+				if armorTypeKey and not isArmorTypeFilterExemptSlot(invType) and not state.armorTypeFilter[armorTypeKey] then
+					blockedByArmorType = true
+				end
+			end
+
+			if not blockedByArmorType and not (state.maxRequiredLevel > 0 and reqLevel > state.maxRequiredLevel) then
 				local itemLink = link or raw
 				if addon.CanPlayerEquip(itemLink) then
 					local score = addon.CalculateScore(itemLink, state.profileName)
@@ -662,6 +684,7 @@ end
 local function startSearchTask(profileName, slotLabel, catalog)
 	local settings = getSourceSettingsSafe()
 	local maxRequiredLevel = normalizeMaxRequiredLevel(settings.searchMaxRequiredLevel)
+	local hasArmorTypeFilter, armorTypeFilter = getArmorTypeFilterForProfile(profileName)
 	if not settings.searchUseMaxRequiredLevel then
 		maxRequiredLevel = 0
 	end
@@ -677,6 +700,8 @@ local function startSearchTask(profileName, slotLabel, catalog)
 		opsBudget = 220,
 		targetMs = 5,
 		maxRequiredLevel = maxRequiredLevel,
+		hasArmorTypeFilter = hasArmorTypeFilter,
+		armorTypeFilter = armorTypeFilter,
 		results = {},
 		isUpgradeSearch = slotLabel == "Upgrades",
 	}

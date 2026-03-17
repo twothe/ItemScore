@@ -21,7 +21,7 @@ local STAT_SECOND_COL_X = STATS_LEFT_PAD + 240
 
 local STAT_GROUPS = {{
 	label = "Primary Attributes",
-	keys = {"ITEM_MOD_STRENGTH_SHORT", "ITEM_MOD_AGILITY_SHORT", "ITEM_MOD_INTELLECT_SHORT", "ITEM_MOD_STAMINA_SHORT", "ITEM_MOD_SPIRIT_SHORT"}
+	keys = {"ITEM_MOD_STRENGTH_SHORT", "ITEM_MOD_AGILITY_SHORT", "ITEM_MOD_INTELLECT_SHORT", "ITEM_MOD_STAMINA_SHORT", "ITEM_MOD_SPIRIT_SHORT", "ARMOR"}
 }, {
 	label = "Power",
 	keys = {"ITEM_MOD_ATTACK_POWER_SHORT", "ITEM_MOD_RANGED_ATTACK_POWER_SHORT", "ITEM_MOD_SPELL_POWER_SHORT"}
@@ -148,6 +148,7 @@ function ProfileComponent:buildStats()
 
 	local y = 0
 	self.fields = {}
+	self.armorTypeChecks = {}
 	for _, group in ipairs(STAT_GROUPS) do
 		local groupLabel = self.statsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
 		groupLabel:SetPoint("TOPLEFT", STAT_FIRST_COL_X, y)
@@ -190,6 +191,48 @@ function ProfileComponent:buildStats()
 		y = y - 6
 	end
 
+	local armorTypeOptions = {}
+	if type(addon.GetArmorTypeOptions) == "function" then
+		armorTypeOptions = addon.GetArmorTypeOptions()
+	end
+
+	if #armorTypeOptions > 0 then
+		local armorTypeLabel = self.statsFrame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+		armorTypeLabel:SetPoint("TOPLEFT", STAT_FIRST_COL_X, y)
+		armorTypeLabel:SetText("Search Armor Type Filter")
+		armorTypeLabel:Show()
+		y = y - 18
+
+		local col = 0
+		for _, option in ipairs(armorTypeOptions) do
+			local container = CreateFrame("Frame", nil, self.statsFrame)
+			container:SetSize(220, STAT_FIELD_HEIGHT)
+			container:SetPoint("TOPLEFT", (col == 0) and STAT_FIRST_COL_X or STAT_SECOND_COL_X, y)
+			container:Show()
+
+			local check = U.CreateCheckButton(container, option.label)
+			check:SetPoint("LEFT", 0, 0)
+			check:SetScript("OnClick", function(btn)
+				addon.SetProfileArmorTypeEnabled(self.profileName, option.key, btn:GetChecked())
+			end)
+			check:Show()
+
+			container.checkbox = check
+			container.armorTypeKey = option.key
+			self.armorTypeChecks[#self.armorTypeChecks + 1] = container
+
+			col = 1 - col
+			if col == 0 then y = y - STAT_FIELD_HEIGHT end
+		end
+		if col == 1 then y = y - STAT_FIELD_HEIGHT end
+
+		local armorTypeHint = self.statsFrame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
+		armorTypeHint:SetPoint("TOPLEFT", STAT_FIRST_COL_X, y)
+		armorTypeHint:SetText("None selected = do not filter armor types in search")
+		armorTypeHint:Show()
+		y = y - 18
+	end
+
 	local statsHeight = -y
 	self.statsFrame:SetHeight(statsHeight)
 	self.totalHeight = statsHeight + HEADER_HEIGHT
@@ -203,6 +246,12 @@ function ProfileComponent:buildStats()
 			field.edit:SetText("")
 		end
 		field.edit:ClearFocus()
+	end
+
+	local armorFilter = (self.profileData and self.profileData.armorTypeFilter) or {}
+	for _, armorTypeContainer in ipairs(self.armorTypeChecks or {}) do
+		local checked = armorFilter[armorTypeContainer.armorTypeKey] and true or false
+		armorTypeContainer.checkbox:SetChecked(checked)
 	end
 end
 
@@ -226,6 +275,11 @@ function ProfileComponent:refresh()
             field.edit:SetText(txt)
             field.edit:SetCursorPosition(0)
 			field.edit:ClearFocus()
+		end
+		local armorFilter = self.profileData.armorTypeFilter or {}
+		for _, armorTypeContainer in ipairs(self.armorTypeChecks or {}) do
+			local checked = armorFilter[armorTypeContainer.armorTypeKey] and true or false
+			armorTypeContainer.checkbox:SetChecked(checked)
 		end
 		self.statsFrame:Show()
 		local newHeight = self.statsFrame:GetHeight() + HEADER_HEIGHT

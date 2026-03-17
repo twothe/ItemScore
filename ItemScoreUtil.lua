@@ -33,6 +33,43 @@ function addon.CreateEditBox(parent, width)
 	eb:SetScript("OnEscapePressed", eb.ClearFocus)
 	return eb
 end
+
+local ARMOR_TYPE_DEFS = {
+	{ key = "cloth", labelGlobal = "ITEM_SUBCLASS_ARMOR_CLOTH", fallback = "Cloth" },
+	{ key = "leather", labelGlobal = "ITEM_SUBCLASS_ARMOR_LEATHER", fallback = "Leather" },
+	{ key = "mail", labelGlobal = "ITEM_SUBCLASS_ARMOR_MAIL", fallback = "Mail" },
+	{ key = "plate", labelGlobal = "ITEM_SUBCLASS_ARMOR_PLATE", fallback = "Plate" },
+}
+
+local ARMOR_TYPE_LOOKUP = {}
+for _, def in ipairs(ARMOR_TYPE_DEFS) do
+	ARMOR_TYPE_LOOKUP[def.key] = def.key
+	ARMOR_TYPE_LOOKUP[string.lower(def.fallback)] = def.key
+	local localized = _G[def.labelGlobal]
+	if type(localized) == "string" and localized ~= "" then
+		ARMOR_TYPE_LOOKUP[string.lower(localized)] = def.key
+	end
+end
+
+function addon.GetArmorTypeOptions()
+	local result = {}
+	for _, def in ipairs(ARMOR_TYPE_DEFS) do
+		local label = _G[def.labelGlobal] or def.fallback
+		result[#result + 1] = {
+			key = def.key,
+			label = label,
+		}
+	end
+	return result
+end
+
+function addon.NormalizeArmorType(itemType, subType)
+	if itemType ~= "Armor" then return nil end
+	local normalized = string.lower(strtrim(tostring(subType or "")))
+	if normalized == "" then return nil end
+	return ARMOR_TYPE_LOOKUP[normalized]
+end
+
 local armorAllowed = {
 	WARRIOR = {
 		Cloth = true,

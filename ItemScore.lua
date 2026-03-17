@@ -1,9 +1,49 @@
 local addonName, addon = ...
 _G.ItemScore = addon
 
+local ARMOR_PROFILE_WEIGHT_KEY = "ARMOR"
+local ARMOR_STAT_KEYS = {
+	RESISTANCE0_NAME = true,
+	ITEM_MOD_ARMOR_SHORT = true,
+}
+local ARMOR_TYPE_FILTER_KEYS = {
+	cloth = true,
+	leather = true,
+	mail = true,
+	plate = true,
+}
+local ARMOR_TYPE_FILTER_ORDER = { "cloth", "leather", "mail", "plate" }
+
 --------------------------------------------------
 -- Data Handling
 --------------------------------------------------
+
+local function normalizeArmorTypeFilter(filterTable)
+	if type(filterTable) ~= "table" then
+		return {}
+	end
+
+	local normalized = {}
+	for _, armorTypeKey in ipairs(ARMOR_TYPE_FILTER_ORDER) do
+		if filterTable[armorTypeKey] then
+			normalized[armorTypeKey] = true
+		end
+	end
+	return normalized
+end
+
+local function normalizeProfile(profile)
+	if type(profile.weights) ~= "table" then
+		profile.weights = {}
+	end
+	if type(profile.enabled) ~= "boolean" then
+		profile.enabled = true
+	end
+	if type(profile.collapsed) ~= "boolean" then
+		profile.collapsed = false
+	end
+	profile.armorTypeFilter = normalizeArmorTypeFilter(profile.armorTypeFilter)
+end
 
 local function ensureData()
 	if not ItemScoreData then ItemScoreData = {} end
@@ -12,11 +52,16 @@ local function ensureData()
 			["DPS"] = {
 				weights = {},
 				enabled = true,
-				collapsed = false
+				collapsed = false,
+				armorTypeFilter = {},
 			}
 		}
 		ItemScoreData.order = {"DPS"}
 		ItemScoreData.activeProfile = "DPS"
+	end
+
+	for _, profile in pairs(ItemScoreData.profiles) do
+		normalizeProfile(profile)
 	end
 end
 
@@ -31,10 +76,12 @@ local function getProfile(name)
 		ItemScoreData.profiles[name] = {
 			weights = {},
 			enabled = true,
-			collapsed = false
+			collapsed = false,
+			armorTypeFilter = {},
 		}
 		table.insert(ItemScoreData.order, name)
 	end
+	normalizeProfile(ItemScoreData.profiles[name])
 	return ItemScoreData.profiles[name]
 end
 
@@ -47,7 +94,8 @@ function addon.AddProfile(name)
 	ItemScoreData.profiles[name] = {
 		weights = {},
 		enabled = true,
-		collapsed = false
+		collapsed = false,
+		armorTypeFilter = {},
 	}
 	table.insert(ItemScoreData.order, name)
 	return true
@@ -99,6 +147,41 @@ function addon.SetWeight(profileName, statKey, value)
 	end
 end
 
+function addon.GetProfileArmorTypeFilterState(profileName)
+	local profile = getProfile(profileName)
+	local filter = profile.armorTypeFilter or {}
+	local selected = {}
+	local hasFilter = false
+	for _, armorTypeKey in ipairs(ARMOR_TYPE_FILTER_ORDER) do
+		if filter[armorTypeKey] then
+			selected[armorTypeKey] = true
+			hasFilter = true
+		end
+	end
+	return hasFilter, selected
+end
+
+function addon.SetProfileArmorTypeEnabled(profileName, armorTypeKey, enabled)
+	if not ARMOR_TYPE_FILTER_KEYS[armorTypeKey] then
+		return false
+	end
+
+	local profile = getProfile(profileName)
+	local filter = profile.armorTypeFilter
+	local oldValue = filter[armorTypeKey] and true or false
+	local newValue = enabled and true or false
+	if oldValue == newValue then
+		return false
+	end
+
+	if newValue then
+		filter[armorTypeKey] = true
+	else
+		filter[armorTypeKey] = nil
+	end
+	return true
+end
+
 --------------------------------------------------
 -- Scoring
 --------------------------------------------------
@@ -112,12 +195,22 @@ local function normalizeScore(score, itemLink)
 	end
 end
 
+local function profileWeightForStat(profile, statKey)
+	if ARMOR_STAT_KEYS[statKey] then
+		local armorWeight = profile.weights[ARMOR_PROFILE_WEIGHT_KEY]
+		if armorWeight ~= nil then
+			return armorWeight
+		end
+	end
+	return profile.weights[statKey] or 0
+end
+
 local function calculateItemScoreForProfile(itemLink, profile)
 	local itemStats = GetItemStats(itemLink)
 	if not itemStats then return 0 end
 	local score = 0
 	for statKey, statValue in pairs(itemStats) do
-		local weight = profile.weights[statKey] or 0
+		local weight = profileWeightForStat(profile, statKey)
 		score = score + statValue * weight
 	end
 	return normalizeScore(score, itemLink)

@@ -3,6 +3,7 @@
 ## Core scoring
 - `CalculateScore(itemLink, nil)` must evaluate profile names from `ItemScoreData.order` and return the highest enabled-profile score.
 - Disabled profiles must never contribute to aggregate/best score.
+- Primary Attribute `Armor` weight must affect armor stat contributions from `GetItemStats` (including legacy armor stat keys).
 
 ## Search data providers
 - ItemScore only (no LootCollector, no AtlasLoot): search opens and shows deterministic "no data source available" state without Lua errors.
@@ -16,6 +17,9 @@
 - Search max-level filter updates must not trigger a full cache rebuild; only search results should change.
 - Search max-level input must keep proper focus behavior (cursor should stop blinking after clicking other search controls/background).
 - If user never set a custom max-level value, default value in search should follow current character level.
+- Profile armor-type filter supports multiple selections (`Cloth/Leather/Mail/Plate`) and must only restrict armor items; non-armor items remain unaffected.
+- If no armor type is selected in a profile filter, search must not apply any armor-type restriction.
+- `Back` (`INVTYPE_CLOAK`) must never be excluded by the armor-type filter, even though cloaks are cloth-subtyped items.
 - LootCollector Worldforged tier filters (`MC/BWL/Naxxramas`) must affect which Worldforged entries are added to search catalog.
 - AtlasLoot area filter: `/is atlas place off <Area>` removes that area from search results.
 - Both addons: merged result deduplicates identical `(place, source, itemID)` triples and preserves multi-source items.
@@ -26,6 +30,7 @@
 - Performance regression: clicking `Search` must keep UI responsive while the result list is processed in background batches.
 - Regression: running search repeatedly (e.g. `Weapons` slot) must not enter an endless auto-search loop when some itemIDs never resolve via `GetItemInfo`.
 - Regression: while `Fetching...` is active, a re-entrant follow-up search that queues additional item queries must not leave the search button permanently disabled.
+- Regression: if `Fetching...` exceeds 60 seconds (e.g. loading-screen/zone transfer during query), query state must auto-reset, button must become usable again, and a new search must run normally.
 - Regression: clicking `Refresh Cache Now` in options triggers only one immediate rebuild (or queues one retry only when current rebuild is busy), never two unconditional rebuilds.
 - Regression: LootCollector provider must respect per-frame `maxOps` budget even when many vendor records contain zero items.
 - Regression: if delta calculation returns sentinel/invalid extreme values for scaled items, search row must display `?` instead of large negative garbage.
