@@ -43,6 +43,7 @@
 - Regression: dropped upgrade entries in `ItemDropWatch` stay fully visible for about 60 seconds, then fade out smoothly, and are removed shortly after.
 - Regression: stale `ItemDropWatchDB.items` entries from previous sessions must not persist in the window after login/reload.
 - Regression: pending GET_ITEM_INFO entries that resolve to non-upgrades must be removed from pending state to avoid unbounded growth.
+- Regression: DropWatch row rendering must never throw Lua errors when an item has an unknown/custom rarity (e.g. quality `7`); row text must still render with fallback color.
 
 ## Locale compatibility
 - On non-English clients, class-restricted items must still be filtered correctly (class list parsing must use localized `ITEM_CLASSES_ALLOWED` label).

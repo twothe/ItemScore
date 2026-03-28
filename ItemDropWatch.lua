@@ -31,6 +31,27 @@ local rarityColors = {
 	[6] = "|cffe6cc80"
 }
 
+-- Resolve any known quality color and always return a usable fallback.
+local function getRarityColor(rarity)
+	local quality = tonumber(rarity)
+	if quality == nil then return rarityColors[1] end
+	local color = rarityColors[quality]
+	if color then return color end
+	local blizzardColor = ITEM_QUALITY_COLORS and ITEM_QUALITY_COLORS[quality]
+	if blizzardColor and blizzardColor.hex then return blizzardColor.hex end
+	return rarityColors[1]
+end
+
+local function getDisplayName(item)
+	if type(item) ~= "table" then return "Unknown Item" end
+	if type(item.name) == "string" and item.name ~= "" then return item.name end
+	if type(item.link) == "string" then
+		local linkName = item.link:match("%[(.-)%]")
+		if linkName and linkName ~= "" then return linkName end
+	end
+	return "Unknown Item"
+end
+
 ------------------------------------------------------------------------
 --  Frame Creation & Drag/Resize
 ------------------------------------------------------------------------
@@ -153,7 +174,7 @@ local function refresh(now)
 		local item = ItemDropWatchDB.items[i]
 		if item then
 			rows[i].icon:SetTexture(item.icon)
-			rows[i].text:SetText(rarityColors[item.rarity] .. item.name .. "|r")
+			rows[i].text:SetText(getRarityColor(item.rarity) .. getDisplayName(item) .. "|r")
 			rows[i].link = item.link
 			rows[i]:SetAlpha(getRowAlpha(getItemAgeSeconds(item, currentTime, currentUptime)))
 			rows[i]:Show()
