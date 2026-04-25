@@ -78,6 +78,12 @@ local function sourcePreview(sourceList)
 	return placeName, sourceName
 end
 
+local function difficultySuffix(label)
+	label = trim(label)
+	if not label then return "" end
+	return " |cffcfcfcf(" .. label .. ")|r"
+end
+
 local function belongsToSlot(invType, wanted)
 	if not invType or not wanted then return false end
 	for _, value in ipairs(wanted) do
@@ -130,7 +136,7 @@ local function insertTop(list, itemData, maxItems)
 	end
 end
 
-local function makeRowData(itemID, raw, link, rarity, name, icon, score, sources)
+local function makeRowData(itemID, raw, link, rarity, name, icon, score, sources, metadata)
 	local placeText, sourceText = sourcePreview(sources)
 	return {
 		score = score,
@@ -142,6 +148,7 @@ local function makeRowData(itemID, raw, link, rarity, name, icon, score, sources
 		dungeon = placeText,
 		sourceText = sourceText,
 		sources = sources,
+		difficultyLabel = metadata and metadata.difficultyLabel or nil,
 	}
 end
 
@@ -228,17 +235,17 @@ for rowIndex = 1, MAX_ROWS do
 
 	row.itemLink = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
 	row.itemLink:SetPoint("LEFT", row.scoreText, "RIGHT", 4, 0)
-	row.itemLink:SetWidth(230)
+	row.itemLink:SetWidth(270)
 	row.itemLink:SetJustifyH("LEFT")
 
 	row.dungeonText = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
 	row.dungeonText:SetPoint("LEFT", row.itemLink, "RIGHT", 4, 0)
-	row.dungeonText:SetWidth(210)
+	row.dungeonText:SetWidth(190)
 	row.dungeonText:SetJustifyH("LEFT")
 
 	row.bossText = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
 	row.bossText:SetPoint("LEFT", row.dungeonText, "RIGHT", 4, 0)
-	row.bossText:SetWidth(220)
+	row.bossText:SetWidth(180)
 	row.bossText:SetJustifyH("LEFT")
 
 	row:SetScript("OnEnter", function(self)
@@ -252,6 +259,9 @@ for rowIndex = 1, MAX_ROWS do
 			for i = 1, maxSources do
 				local sourceData = self.sources[i]
 				local line = string.format("%s - %s", sourceData.place or "Unknown Place", sourceData.source or "Unknown Source")
+				if sourceData.difficultyLabel then
+					line = line .. " (" .. sourceData.difficultyLabel .. ")"
+				end
 				GameTooltip:AddLine(line, 0.8, 0.8, 0.8)
 			end
 			if #self.sources > maxSources then
@@ -292,6 +302,7 @@ local function getCatalogAndStatus()
 	return {
 		itemIDs = {},
 		itemSources = {},
+		itemMeta = {},
 		byPlace = {},
 	}, fallbackStatus("GetSearchCatalog unavailable")
 end
@@ -463,7 +474,7 @@ local function refreshRows(data)
 				end
 				local _, _, rarity = GetItemInfo(rowData.link)
 				local color = select(4, GetItemQualityColor(rarity or 1))
-				row.itemLink:SetText(color .. (select(2, GetItemInfo(rowData.raw)) or ("[" .. rowData.name .. "]")) .. "|r")
+				row.itemLink:SetText(color .. (select(2, GetItemInfo(rowData.raw)) or ("[" .. rowData.name .. "]")) .. "|r" .. difficultySuffix(rowData.difficultyLabel))
 				row.dungeonText:SetText(rowData.dungeon or "")
 				row.bossText:SetText(rowData.sourceText or "")
 				row.link = rowData.link
@@ -548,10 +559,22 @@ end
 --------------------------------------------------
 local searchState = nil
 local searchWorker = CreateFrame("Frame")
+local pendingQueryRefresh = false
 
 local function resetSearchButton()
 	searchBtn:SetText("Search")
 	searchBtn:Enable()
+end
+
+local function scheduleSearchAfterItemInfo()
+	if pendingQueryRefresh then return end
+	pendingQueryRefresh = true
+	ItemScoreQuery.RegisterDone(function()
+		pendingQueryRefresh = false
+		if frame:IsShown() then
+			Search.DoSearch()
+		end
+	end)
 end
 
 local function buildUpgradeRows(slotStates)
@@ -583,7 +606,9 @@ local function processSearchTask(state, maxOps)
 		local raw = "item:" .. itemID .. ":::::::::"
 		local name, link, rarity, _, requiredLevel, itemType, subType, _, invType, icon = GetItemInfo(raw)
 		if not name then
-			ItemScoreQuery.Add(itemID)
+			if not ItemScoreQuery.Add(itemID) then
+				state.skippedItemInfo = true
+			end
 			state.missingItemInfo = true
 		else
 			local reqLevel = tonumber(requiredLevel) or 0
@@ -612,7 +637,7 @@ local function processSearchTask(state, maxOps)
 					local score = addon.CalculateScore(itemLink, state.profileName)
 					if score and score >= 5 then
 						local sources = state.itemSources[itemID] or {}
-						local rowData = makeRowData(itemID, raw, itemLink, rarity, name, icon, score, sources)
+						local rowData = makeRowData(itemID, raw, itemLink, rarity, name, icon, score, sources, state.itemMeta[itemID])
 
 						if state.isUpgradeSearch then
 							if addon.IsUpgrade(itemLink, state.profileName) then
@@ -656,13 +681,8 @@ local function finishSearchTask(state)
 				{ isHeader = true, label = "Fetching item info. Results will update shortly." },
 			})
 		end
-		searchBtn:SetText("Fetching...")
-		searchBtn:Disable()
-		ItemScoreQuery.RegisterDone(function()
-			if frame:IsShown() then
-				Search.DoSearch()
-			end
-		end)
+		resetSearchButton()
+		scheduleSearchAfterItemInfo()
 		return
 	end
 
@@ -716,9 +736,11 @@ local function startSearchTask(profileName, slotLabel, catalog)
 		slotLabel = slotLabel,
 		itemIDs = (catalog and catalog.itemIDs) or {},
 		itemSources = (catalog and catalog.itemSources) or {},
+		itemMeta = (catalog and catalog.itemMeta) or {},
 		total = #((catalog and catalog.itemIDs) or {}),
 		index = 1,
 		missingItemInfo = false,
+		skippedItemInfo = false,
 		opsBudget = 220,
 		targetMs = 5,
 		maxRequiredLevel = maxRequiredLevel,
@@ -757,17 +779,6 @@ local function doSearch()
 	clearMaxLevelEditFocus()
 	applyMaxLevelFilterValue()
 	applyMaxLevelFilterEnabled()
-
-	if ItemScoreQuery.IsBusy() then
-		searchBtn:SetText("Fetching...")
-		searchBtn:Disable()
-		ItemScoreQuery.RegisterDone(function()
-			if frame:IsShown() then
-				doSearch()
-			end
-		end)
-		return
-	end
 
 	if not selectedProfile or not selectedSlot then return end
 

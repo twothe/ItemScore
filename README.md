@@ -9,13 +9,14 @@
 - Shows scores directly in item tooltips.
 - Shows upgrade delta versus your currently equipped gear.
 - Provides a searchable upgrade list (`/is`) using optional data providers.
+- Shows known AtlasLoot item grades directly in search results, e.g. `M+10` or `Asc`.
 - Shows recent dropped upgrades in a small window.
 
 ## Data Providers
 - `LootCollector`
 - `AtlasLoot`
 
-You can configure which providers to use.
+You can configure which providers to use. AtlasLoot search data supports both legacy AtlasLoot data and the Ascension 8.x beta layout, plus configurable dungeon and raid difficulty limits in `/itemscore` -> `Loot Sources`.
 
 ## Installation
 1. Download the ZIP from [Releases](https://github.com/twothe/ItemScore/releases/latest).

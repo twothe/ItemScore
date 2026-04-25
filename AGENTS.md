@@ -8,6 +8,10 @@
 - Treat external loot providers (`LootCollector`, `AtlasLoot`) as optional; never hard-fail when absent.
 - Keep async callback dispatch reentrancy-safe (callbacks may enqueue new callbacks while running).
 - Keep background work schedulers single-shot (avoid combining immediate and queued refresh triggers for the same action).
+- Treat AtlasLoot dungeon/raid difficulty limits as cache-time filters because they change collected item IDs.
+- Detect AtlasLoot data layout at runtime; prefer the 8.x beta menu/item adapter and keep legacy `AtlasLoot_Data` as fallback.
+- Keep search usable when custom item IDs never resolve through `GetItemInfo`; unresolved IDs must be bounded by retry/timeout behavior.
+- Keep item-info fetching adaptive per frame so the addon maximizes throughput without unbounded frame spikes.
 
 ## 2. Project Overview
 - `ItemScore` is a Lua WoW addon for a private WotLK 3.3.5a server.

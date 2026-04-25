@@ -5,9 +5,9 @@ local provider = {
 }
 
 local WORLDFORGED_TIERS = {
-	{ settingKey = "worldforgedMC", difficulty = 6, label = "Worldforged MC" },
-	{ settingKey = "worldforgedBWL", difficulty = 7, label = "Worldforged BWL" },
-	{ settingKey = "worldforgedNaxx", difficulty = 9, label = "Worldforged Naxxramas" },
+	{ settingKey = "worldforgedMC", difficulty = 6, label = "Worldforged MC", difficultyLabel = "WF MC" },
+	{ settingKey = "worldforgedBWL", difficulty = 7, label = "Worldforged BWL", difficultyLabel = "WF BWL" },
+	{ settingKey = "worldforgedNaxx", difficulty = 9, label = "Worldforged Naxxramas", difficultyLabel = "WF Naxx" },
 }
 
 local function clean(text)
@@ -92,12 +92,15 @@ local function addWorldforgedMappings(state, addMapping, placeName, itemID)
 	local added = false
 	for _, tierDef in ipairs(WORLDFORGED_TIERS) do
 		if settings[tierDef.settingKey] then
-			local tierItemID = tierIDs[tierDef.settingKey]
-			if tierItemID then
-				addMapping(placeName, tierDef.label, tierItemID)
-				added = true
+				local tierItemID = tierIDs[tierDef.settingKey]
+				if tierItemID then
+					addMapping(placeName, tierDef.label, tierItemID, {
+						difficultyLabel = tierDef.difficultyLabel,
+						difficultyRank = tierDef.difficulty,
+					})
+					added = true
+				end
 			end
-		end
 	end
 
 	if not added and settings.worldforgedMC and settings.worldforgedBWL and settings.worldforgedNaxx then

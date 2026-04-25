@@ -11,8 +11,15 @@
 - LootCollector only: vendor and discovery-derived items are searchable by zone/source.
 - LootCollector Worldforged aggregation: records appear as `Zone -> Worldforged -> itemIDs`.
 - AtlasLoot only: dungeon/raid loot entries are searchable by instance and boss/source.
+- AtlasLoot adapter detection: Ascension 8.x beta data (`AtlasLoot.ui.menus.data` + `AtlasLoot.data.item`) must use the `atlasloot_v8` adapter even when global `AtlasLoot_Data` contains only compatibility data.
+- AtlasLoot adapter fallback: legacy `AtlasLoot_Data` tables must still be collected when beta menu/item data is absent.
+- AtlasLoot module loading must call real load-on-demand addon names with underscores, e.g. `AtlasLoot_OriginalWoW`.
+- AtlasLoot 8.x beta collection must read direct item tables keyed by `dataID .. pageIndex` and referenced tables keyed by NPC/ref id.
 - AtlasLoot expansion filters (`classic/tbc/wrath`) immediately change cache contents after refresh.
 - AtlasLoot dungeons are always included for enabled expansions and cannot be disabled independently.
+- AtlasLoot dungeon difficulty limit: default `Dungeon Max Mythic Level = 0` includes Heroic and base Mythic variants; raising the value includes Mythic+ item IDs up to the AtlasLoot-supported maximum.
+- AtlasLoot raid difficulty limit: `Normal`, `Heroic`, `Mythic`, and `Ascended` include only variants at or below the selected maximum.
+- AtlasLoot search row display must show item grade next to the item link when known, e.g. `[Wildfire Cape] (M+10)`, `[Item] (Asc)`.
 - AtlasLoot raids are individually toggleable in `Interface -> AddOns -> ItemScore -> Loot Sources`, grouped by expansion.
 - Search max-level filter (from search window): with `Max Required Level = 38`, results must exclude items requiring level 39+.
 - Search max-level filter updates must not trigger a full cache rebuild; only search results should change.
@@ -34,10 +41,12 @@
 - Performance regression: clicking `Search` must keep UI responsive while the result list is processed in background batches.
 - Regression: running search repeatedly (e.g. `Weapons` slot) must not enter an endless auto-search loop when some itemIDs never resolve via `GetItemInfo`.
 - Regression: while `Fetching...` is active, a re-entrant follow-up search that queues additional item queries must not leave the search button permanently disabled.
-- Regression: if `Fetching...` exceeds 60 seconds (e.g. loading-screen/zone transfer during query), query state must auto-reset, button must become usable again, and a new search must run normally.
+- Regression: item-info fetching must stay per-frame/adaptive; it should increase throughput when cheap, reduce throughput when frames are expensive, and never process an unbounded queue in one frame.
+- Regression: if `Fetching...` exceeds the bounded query timeout (e.g. loading-screen/zone transfer during query), query state must auto-reset, button must become usable again, and a new search must run normally.
 - Regression: clicking `Refresh Cache Now` in options triggers only one immediate rebuild (or queues one retry only when current rebuild is busy), never two unconditional rebuilds.
 - Regression: LootCollector provider must respect per-frame `maxOps` budget even when many vendor records contain zero items.
 - Regression: if delta calculation returns sentinel/invalid extreme values for scaled items, search row must display `?` instead of large negative garbage.
+- Regression: repeated unresolved/custom item IDs must not leave the search button stuck on `Fetching...`; after bounded retries, search remains usable and shows available results.
 
 ## DropWatch lifecycle
 - Regression: dropped upgrade entries in `ItemDropWatch` stay fully visible for about 60 seconds, then fade out smoothly, and are removed shortly after.

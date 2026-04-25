@@ -1,7 +1,20 @@
 local addonName, addon = ...
 
-local CACHE_SCHEMA_VERSION = 2
+local CACHE_SCHEMA_VERSION = 4
 local CACHE_REFRESH_INTERVAL_SECONDS = 24 * 60 * 60
+local MAX_DUNGEON_MYTHIC_LEVEL_FALLBACK = 40
+local RAID_DIFFICULTY_NORMAL = 3
+local RAID_DIFFICULTY_HEROIC = 4
+local RAID_DIFFICULTY_MYTHIC = 5
+local RAID_DIFFICULTY_ASCENDED = 6
+local DEFAULT_ATLAS_RAID_MAX_DIFFICULTY = RAID_DIFFICULTY_MYTHIC
+
+local RAID_DIFFICULTY_CHOICES = {
+	{ value = RAID_DIFFICULTY_NORMAL, label = "Normal" },
+	{ value = RAID_DIFFICULTY_HEROIC, label = "Heroic" },
+	{ value = RAID_DIFFICULTY_MYTHIC, label = "Mythic" },
+	{ value = RAID_DIFFICULTY_ASCENDED, label = "Ascended" },
+}
 
 local providers = {}
 local providerOrder = {}
@@ -17,6 +30,7 @@ local runtime = {
 local EMPTY_CATALOG = {
 	itemIDs = {},
 	itemSources = {},
+	itemMeta = {},
 	byPlace = {},
 	builtAt = 0,
 	providerStats = {},
@@ -38,6 +52,20 @@ local function stripColorCodes(text)
 	return trim(text)
 end
 
+local function normalizeAtlasDungeonMaxMythicLevel(value)
+	local numeric = math.floor(tonumber(value) or 0)
+	if numeric < 0 then numeric = 0 end
+	if numeric > MAX_DUNGEON_MYTHIC_LEVEL_FALLBACK then numeric = MAX_DUNGEON_MYTHIC_LEVEL_FALLBACK end
+	return numeric
+end
+
+local function normalizeAtlasRaidMaxDifficulty(value)
+	local numeric = math.floor(tonumber(value) or DEFAULT_ATLAS_RAID_MAX_DIFFICULTY)
+	if numeric < RAID_DIFFICULTY_NORMAL then numeric = RAID_DIFFICULTY_NORMAL end
+	if numeric > RAID_DIFFICULTY_ASCENDED then numeric = RAID_DIFFICULTY_ASCENDED end
+	return numeric
+end
+
 local function defaultSourceSettings()
 	return {
 		useLootCollector = true,
@@ -48,6 +76,8 @@ local function defaultSourceSettings()
 		atlasClassic = true,
 		atlasTBC = false,
 		atlasWrath = false,
+		atlasDungeonMaxMythicLevel = 0,
+		atlasRaidMaxDifficulty = DEFAULT_ATLAS_RAID_MAX_DIFFICULTY,
 		atlasDisabledPlaces = {},
 		atlasDisabledRaids = {},
 		worldforgedMC = true,
@@ -77,6 +107,8 @@ local function ensureSettings()
 	if type(ItemScoreData.searchSources.atlasDisabledRaids) ~= "table" then
 		ItemScoreData.searchSources.atlasDisabledRaids = {}
 	end
+	ItemScoreData.searchSources.atlasDungeonMaxMythicLevel = normalizeAtlasDungeonMaxMythicLevel(ItemScoreData.searchSources.atlasDungeonMaxMythicLevel)
+	ItemScoreData.searchSources.atlasRaidMaxDifficulty = normalizeAtlasRaidMaxDifficulty(ItemScoreData.searchSources.atlasRaidMaxDifficulty)
 	ItemScoreData.searchSources.searchMaxRequiredLevel = tonumber(ItemScoreData.searchSources.searchMaxRequiredLevel) or 0
 	if ItemScoreData.searchSources.searchMaxRequiredLevel < 0 then
 		ItemScoreData.searchSources.searchMaxRequiredLevel = 0
@@ -110,6 +142,8 @@ local function snapshotSettings(settings)
 		atlasClassic = settings.atlasClassic and true or false,
 		atlasTBC = settings.atlasTBC and true or false,
 		atlasWrath = settings.atlasWrath and true or false,
+		atlasDungeonMaxMythicLevel = normalizeAtlasDungeonMaxMythicLevel(settings.atlasDungeonMaxMythicLevel),
+		atlasRaidMaxDifficulty = normalizeAtlasRaidMaxDifficulty(settings.atlasRaidMaxDifficulty),
 		worldforgedMC = settings.worldforgedMC and true or false,
 		worldforgedBWL = settings.worldforgedBWL and true or false,
 		worldforgedNaxx = settings.worldforgedNaxx and true or false,
@@ -151,6 +185,9 @@ local function ensureCache()
 	if type(ItemScoreCacheDB.catalog.itemSources) ~= "table" then
 		ItemScoreCacheDB.catalog.itemSources = {}
 	end
+	if type(ItemScoreCacheDB.catalog.itemMeta) ~= "table" then
+		ItemScoreCacheDB.catalog.itemMeta = {}
+	end
 	if type(ItemScoreCacheDB.catalog.byPlace) ~= "table" then
 		ItemScoreCacheDB.catalog.byPlace = {}
 	end
@@ -188,6 +225,8 @@ local function settingsFingerprint(settings)
 		settings.atlasClassic and "1" or "0",
 		settings.atlasTBC and "1" or "0",
 		settings.atlasWrath and "1" or "0",
+		tostring(normalizeAtlasDungeonMaxMythicLevel(settings.atlasDungeonMaxMythicLevel)),
+		tostring(normalizeAtlasRaidMaxDifficulty(settings.atlasRaidMaxDifficulty)),
 		settings.worldforgedMC and "1" or "0",
 		settings.worldforgedBWL and "1" or "0",
 		settings.worldforgedNaxx and "1" or "0",
@@ -254,15 +293,46 @@ end
 local function createCollector()
 	local byPlaceSets = {}
 	local itemSourcesSets = {}
+	local itemMeta = {}
 	local uniqueItemIDs = {}
 	local mappingCount = 0
 
-	local function addMapping(place, source, itemID)
+	local function normalizeMappingMeta(metadata)
+		if type(metadata) ~= "table" then return nil end
+		local difficultyLabel = stripColorCodes(metadata.difficultyLabel)
+		local difficultyRank = tonumber(metadata.difficultyRank)
+		if not difficultyLabel and not difficultyRank then return nil end
+		return {
+			difficultyLabel = difficultyLabel,
+			difficultyRank = difficultyRank,
+		}
+	end
+
+	local function mergeItemMeta(itemID, metadata)
+		if not metadata then return end
+		local existing = itemMeta[itemID]
+		if not existing then
+			itemMeta[itemID] = metadata
+			return
+		end
+		if not existing.difficultyLabel and metadata.difficultyLabel then
+			existing.difficultyLabel = metadata.difficultyLabel
+		end
+		if (metadata.difficultyRank or 0) > (existing.difficultyRank or 0) then
+			existing.difficultyRank = metadata.difficultyRank
+			if metadata.difficultyLabel then
+				existing.difficultyLabel = metadata.difficultyLabel
+			end
+		end
+	end
+
+	local function addMapping(place, source, itemID, metadata)
 		local numericItemID = tonumber(itemID)
 		if not numericItemID or numericItemID <= 0 then return end
 
 		local placeName = stripColorCodes(place) or "Unknown Zone"
 		local sourceName = stripColorCodes(source) or "Unknown Source"
+		local mappingMeta = normalizeMappingMeta(metadata)
 
 		byPlaceSets[placeName] = byPlaceSets[placeName] or {}
 		byPlaceSets[placeName][sourceName] = byPlaceSets[placeName][sourceName] or {}
@@ -272,12 +342,14 @@ local function createCollector()
 		end
 
 		uniqueItemIDs[numericItemID] = true
+		mergeItemMeta(numericItemID, mappingMeta)
 
 		itemSourcesSets[numericItemID] = itemSourcesSets[numericItemID] or {}
-		local key = placeName .. "\031" .. sourceName
+		local key = placeName .. "\031" .. sourceName .. "\031" .. (mappingMeta and mappingMeta.difficultyLabel or "")
 		itemSourcesSets[numericItemID][key] = {
 			place = placeName,
 			source = sourceName,
+			difficultyLabel = mappingMeta and mappingMeta.difficultyLabel or nil,
 		}
 	end
 
@@ -295,10 +367,16 @@ local function createCollector()
 				list[#list + 1] = {
 					place = sourceData.place,
 					source = sourceData.source,
+					difficultyLabel = sourceData.difficultyLabel,
 				}
 			end
 			table.sort(list, function(a, b)
-				if a.place == b.place then return a.source < b.source end
+				if a.place == b.place then
+					if a.source == b.source then
+						return tostring(a.difficultyLabel or "") < tostring(b.difficultyLabel or "")
+					end
+					return a.source < b.source
+				end
 				return a.place < b.place
 			end)
 			itemSources[itemID] = list
@@ -320,6 +398,7 @@ local function createCollector()
 		return {
 			itemIDs = itemIDs,
 			itemSources = itemSources,
+			itemMeta = itemMeta,
 			byPlace = byPlace,
 			mappingCount = mappingCount,
 		}
@@ -561,6 +640,22 @@ function addon.SetSearchSourceOption(optionKey, value)
 		return changed
 	end
 
+	if optionKey == "atlasDungeonMaxMythicLevel" then
+		local numeric = normalizeAtlasDungeonMaxMythicLevel(value)
+		if settings.atlasDungeonMaxMythicLevel == numeric then return false end
+		settings.atlasDungeonMaxMythicLevel = numeric
+		runtime.forceRefresh = true
+		return true
+	end
+
+	if optionKey == "atlasRaidMaxDifficulty" then
+		local numeric = normalizeAtlasRaidMaxDifficulty(value)
+		if settings.atlasRaidMaxDifficulty == numeric then return false end
+		settings.atlasRaidMaxDifficulty = numeric
+		runtime.forceRefresh = true
+		return true
+	end
+
 	if optionKey == "atlasDungeon" then
 		return false
 	end
@@ -638,6 +733,29 @@ function addon.GetAtlasLootRaidChoices()
 		return {}
 	end
 	return raidChoices
+end
+
+-- Returns the highest AtlasLoot Mythic+ dungeon level supported by the loaded provider.
+function addon.GetAtlasLootMaxDungeonMythicLevel()
+	local provider = providers["AtlasLoot"]
+	if provider and type(provider.GetMaxDungeonMythicLevel) == "function" then
+		local ok, maxLevel = pcall(provider.GetMaxDungeonMythicLevel)
+		maxLevel = ok and normalizeAtlasDungeonMaxMythicLevel(maxLevel) or nil
+		if maxLevel then return maxLevel end
+	end
+	return MAX_DUNGEON_MYTHIC_LEVEL_FALLBACK
+end
+
+-- Returns selectable maximum raid difficulties in ascending order.
+function addon.GetAtlasLootRaidDifficultyChoices()
+	local choices = {}
+	for _, choice in ipairs(RAID_DIFFICULTY_CHOICES) do
+		choices[#choices + 1] = {
+			value = choice.value,
+			label = choice.label,
+		}
+	end
+	return choices
 end
 
 function addon.SetAllAtlasLootRaidsEnabled(enabled)

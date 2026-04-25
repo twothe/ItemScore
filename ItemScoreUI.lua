@@ -527,6 +527,56 @@ local function getRaidChoices()
 	return choices
 end
 
+local function getAtlasDungeonMaxMythicLevel()
+	if type(addon.GetAtlasLootMaxDungeonMythicLevel) ~= "function" then
+		return 40
+	end
+	local maxLevel = math.floor(tonumber(addon.GetAtlasLootMaxDungeonMythicLevel()) or 40)
+	if maxLevel < 0 then maxLevel = 0 end
+	return maxLevel
+end
+
+local function getRaidDifficultyChoices()
+	if type(addon.GetAtlasLootRaidDifficultyChoices) == "function" then
+		local choices = addon.GetAtlasLootRaidDifficultyChoices()
+		if type(choices) == "table" and #choices > 0 then
+			return choices
+		end
+	end
+	return {
+		{ value = 3, label = "Normal" },
+		{ value = 4, label = "Heroic" },
+		{ value = 5, label = "Mythic" },
+		{ value = 6, label = "Ascended" },
+	}
+end
+
+local function getRaidDifficultyLabel(value)
+	local numeric = tonumber(value) or 5
+	for _, choice in ipairs(getRaidDifficultyChoices()) do
+		if tonumber(choice.value) == numeric then
+			return choice.label
+		end
+	end
+	return "Mythic"
+end
+
+local function clampDungeonMaxMythicLevel(value)
+	local maxLevel = getAtlasDungeonMaxMythicLevel()
+	local numeric = math.floor(tonumber(value) or 0)
+	if numeric < 0 then numeric = 0 end
+	if numeric > maxLevel then numeric = maxLevel end
+	return numeric, maxLevel
+end
+
+local function commitDungeonMaxMythicLevel(panel)
+	if not panel or not panel.dungeonMaxMythicEdit then return end
+	local value = clampDungeonMaxMythicLevel(panel.dungeonMaxMythicEdit:GetText())
+	panel.dungeonMaxMythicEdit:SetText(tostring(value))
+	setSourceOption("atlasDungeonMaxMythicLevel", value)
+	refreshSourcesPanel(panel)
+end
+
 local function hideRaidRows(panel)
 	if not panel.raidRows then return end
 	for _, row in ipairs(panel.raidRows) do
@@ -630,6 +680,19 @@ refreshSourcesPanel = function(panel)
 	setCheckIfExists(panel.atlasClassic, settings.atlasClassic)
 	setCheckIfExists(panel.atlasTBC, settings.atlasTBC)
 	setCheckIfExists(panel.atlasWrath, settings.atlasWrath)
+	if panel.dungeonMaxMythicEdit then
+		local dungeonMaxLevel, availableMaxLevel = clampDungeonMaxMythicLevel(settings.atlasDungeonMaxMythicLevel)
+		if not panel.dungeonMaxMythicEdit:HasFocus() then
+			panel.dungeonMaxMythicEdit:SetText(tostring(dungeonMaxLevel))
+		end
+		if panel.dungeonMaxMythicHint then
+			panel.dungeonMaxMythicHint:SetText("0 = Mythic, max " .. tostring(availableMaxLevel))
+		end
+	end
+	if panel.raidMaxDifficultyDrop then
+		UIDropDownMenu_SetSelectedValue(panel.raidMaxDifficultyDrop, settings.atlasRaidMaxDifficulty)
+		UIDropDownMenu_SetText(panel.raidMaxDifficultyDrop, getRaidDifficultyLabel(settings.atlasRaidMaxDifficulty))
+	end
 
 	local atlasEnabled = settings.useAtlasLoot and true or false
 	local lootCollectorEnabled = settings.useLootCollector and true or false
@@ -641,15 +704,23 @@ refreshSourcesPanel = function(panel)
 	setButtonEnabled(panel.atlasWrath, atlasEnabled)
 	setButtonEnabled(panel.enableAllRaidsBtn, atlasEnabled)
 	setButtonEnabled(panel.disableAllRaidsBtn, atlasEnabled)
+	setButtonEnabled(panel.dungeonMaxMythicEdit, atlasEnabled)
+	if panel.raidMaxDifficultyDrop then
+		if atlasEnabled and type(UIDropDownMenu_EnableDropDown) == "function" then
+			UIDropDownMenu_EnableDropDown(panel.raidMaxDifficultyDrop)
+		elseif not atlasEnabled and type(UIDropDownMenu_DisableDropDown) == "function" then
+			UIDropDownMenu_DisableDropDown(panel.raidMaxDifficultyDrop)
+		end
+	end
 	rebuildRaidList(panel, settings)
 
-		panel.statusText:SetText(string.format("Cache: %d items", status.itemCount or 0))
+	panel.statusText:SetText(string.format("Cache: %d items", status.itemCount or 0))
 
 	local disabledCount = 0
 	if type(addon.GetDisabledAtlasLootPlaces) == "function" then
 		disabledCount = #(addon.GetDisabledAtlasLootPlaces() or {})
 	end
-	panel.helpText:SetText("Dungeons are always active for enabled expansions.\nArea-level filters via chat:\n/is atlas place off <Area>\n/is atlas place on <Area>\n/is atlas place all\n/is atlas place list\nDisabled areas: " ..
+	panel.helpText:SetText("Dungeons are always active for enabled expansions.\nDungeon and raid difficulty limits affect AtlasLoot cache contents.\nArea-level filters via chat:\n/is atlas place off <Area>\n/is atlas place on <Area>\n/is atlas place all\n/is atlas place list\nDisabled areas: " ..
 		tostring(disabledCount))
 end
 
@@ -741,6 +812,47 @@ SourcesPanel:SetScript("OnShow", function(self)
 		dungeonInfo:SetPoint("TOPLEFT", 36, y)
 		dungeonInfo:SetJustifyH("LEFT")
 		dungeonInfo:SetText("Dungeons are always active for enabled expansions.")
+
+		y = y - 26
+		self.dungeonMaxMythicLabel = self:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+		self.dungeonMaxMythicLabel:SetPoint("TOPLEFT", 36, y)
+		self.dungeonMaxMythicLabel:SetText("Dungeon Max Mythic Level")
+
+		self.dungeonMaxMythicEdit = U.CreateEditBox(self, 44)
+		self.dungeonMaxMythicEdit:SetPoint("LEFT", self.dungeonMaxMythicLabel, "RIGHT", 10, 0)
+		self.dungeonMaxMythicEdit:SetNumeric(true)
+		self.dungeonMaxMythicEdit:SetText("0")
+		self.dungeonMaxMythicEdit:SetScript("OnEnterPressed", function(box)
+			box:ClearFocus()
+		end)
+		self.dungeonMaxMythicEdit:SetScript("OnEditFocusLost", function()
+			commitDungeonMaxMythicLevel(self)
+		end)
+
+		self.dungeonMaxMythicHint = self:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
+		self.dungeonMaxMythicHint:SetPoint("LEFT", self.dungeonMaxMythicEdit, "RIGHT", 10, 0)
+		self.dungeonMaxMythicHint:SetText("0 = Mythic")
+
+		y = y - 30
+		self.raidMaxDifficultyLabel = self:CreateFontString(nil, "ARTWORK", "GameFontNormal")
+		self.raidMaxDifficultyLabel:SetPoint("TOPLEFT", 36, y)
+		self.raidMaxDifficultyLabel:SetText("Raid Max Difficulty")
+
+		self.raidMaxDifficultyDrop = CreateFrame("Frame", "ISAtlasRaidDifficultyDD", self, "UIDropDownMenuTemplate")
+		self.raidMaxDifficultyDrop:SetPoint("LEFT", self.raidMaxDifficultyLabel, "RIGHT", -4, -3)
+		UIDropDownMenu_Initialize(self.raidMaxDifficultyDrop, function()
+			for _, choice in ipairs(getRaidDifficultyChoices()) do
+				UIDropDownMenu_AddButton({
+					text = choice.label,
+					value = choice.value,
+					func = function(button)
+						setSourceOption("atlasRaidMaxDifficulty", button.value)
+						refreshSourcesPanel(self)
+					end,
+				})
+			end
+		end)
+		UIDropDownMenu_SetWidth(self.raidMaxDifficultyDrop, 100)
 
 		y = y - 34
 		self.refreshCacheBtn = U.CreateButton(self, 150, HEADER_HEIGHT, "Refresh Cache Now")

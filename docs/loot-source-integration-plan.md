@@ -30,14 +30,19 @@ Important limitation:
 
 ### AtlasLoot
 - Main addon object: `ATLASLOOT` / `LibStub("AceAddon-3.0"):GetAddon("AtlasLoot")`.
-- Loot tables are in global `AtlasLoot_Data`.
+- AtlasLoot Ascension 8.x beta keeps global `AtlasLoot_Data` only as a compatibility stub.
+- AtlasLoot Ascension 8.x beta stores instance menus in `AtlasLoot.ui.menus.data` and item rows in `AtlasLoot.data.item`.
+- Legacy AtlasLoot builds store boss loot in global `AtlasLoot_Data`.
 - Expansion modules are load-on-demand (`AtlasLoot_OriginalWoW`, `AtlasLoot_BurningCrusade`, `AtlasLoot_WrathoftheLichKing`, etc.).
-- The addon already exposes load helpers:
-	- `AtlasLoot:LoadAllModules()`
-	- `AtlasLoot:IsLootTableAvailable(dataSourceKey)`
-- Table structure for boss loot is consistent:
+- `AtlasLoot:IsLootTableAvailable(moduleName)` expects the real module addon name, including underscores.
+- Legacy table structure for boss loot is consistent:
 	- top table has `Name` (instance/loot place) and usually `Type`.
 	- nested entries have `Name` (boss/source) and sides with `{ itemID = ... }`.
+- 8.x beta menu structure is:
+	- `menu.Module`, `menu.Name`, `menu.Type`.
+	- numeric menu pages like `{ "Boss Name", { npcOrRefIds... } }`.
+	- direct item tables are keyed as `dataID .. pageIndex` in `AtlasLoot.data.item`.
+	- referenced/drop-rate item tables may also be keyed by numeric NPC/ref id.
 
 Important limitation:
 - AtlasLoot contains many non-boss datasets (crafting, collections, events).
@@ -57,10 +62,12 @@ Public API:
 Normalized internal shape:
 - `catalog.byPlace[placeName][sourceName] = { itemID, ... }`
 - `catalog.itemSources[itemID] = { { place = "...", source = "..." }, ... }`
+- `catalog.itemMeta[itemID] = { difficultyLabel = "...", difficultyRank = number }`
 
 Notes:
 - `byPlace` preserves current conceptual shape.
 - `itemSources` prevents lossy mapping and handles multi-source duplicates.
+- `itemMeta` stores compact display metadata such as AtlasLoot difficulty labels (`N`, `HC`, `M`, `M+10`, `Asc`).
 
 ### 2. Provider implementations
 Add provider modules:
@@ -70,6 +77,7 @@ Add provider modules:
 Provider contract:
 - `IsAvailable() -> boolean`
 - `Collect(addMapping, settings) -> statsTable` (mutates catalog through helper inserter)
+- Incremental providers may expose `StartCollect`, `StepCollect`, and `FinishCollect`.
 - Never throw; fail closed and return partial data.
 
 ### 3. Provider priority and merge
@@ -103,8 +111,13 @@ Rationale:
 
 ### AtlasLoot extraction
 Preparation:
-- If AtlasLoot is loaded, call `AtlasLoot:LoadAllModules()` once.
-- If AtlasLoot is installed but not loaded, attempt guarded `LoadAddOn("AtlasLoot")`, then load modules.
+- If AtlasLoot is installed but not loaded, attempt guarded `LoadAddOn("AtlasLoot")`.
+- Load only enabled expansion modules during cache build.
+- Load all expansion modules when building the raid checklist for the settings UI.
+- Use `AtlasLoot:IsLootTableAvailable("AtlasLoot_OriginalWoW")`, `AtlasLoot:IsLootTableAvailable("AtlasLoot_BurningCrusade")`, and `AtlasLoot:IsLootTableAvailable("AtlasLoot_WrathoftheLichKing")` when available.
+- Select the runtime adapter automatically:
+	- prefer `atlasloot_v8` when `AtlasLoot.ui.menus.data` and `AtlasLoot.data.item` are available.
+	- fall back to `legacy` when useful `AtlasLoot_Data` tables are available.
 
 Selection filter:
 - Include only tables that look like loot-instance datasets.
@@ -114,9 +127,11 @@ Selection filter:
 - Exclude known crafting/collection/vanity-only datasets.
 
 Mapping:
-- `place = instanceTable.Name`.
-- `source = bossTable.Name` (fallback `"Unknown Source"`).
+- `place = instance/menu Name`.
+- `source = boss/page Name` (fallback `"Unknown Source"`).
 - `itemID = entry.itemID` for every item row.
+- For AtlasLoot 8.x beta, collect rows from direct `dataID .. pageIndex` tables plus referenced item tables listed by the menu page.
+- AtlasLoot difficulty expansion passes metadata into the catalog so search rows can show the concrete item grade next to the item link.
 
 ## Search integration changes
 
@@ -147,6 +162,8 @@ Refresh triggers:
 - `/is atlas on|off`: enable/disable AtlasLoot provider.
 - `/is atlas classic|tbc|wrath on|off`: expansion filters.
 - Dungeons are always enabled for active expansions.
+- Dungeon AtlasLoot variants are included up to `Dungeon Max Mythic Level` in `Interface -> AddOns -> ItemScore -> Loot Sources`; `0` means base Mythic and the upper bound follows AtlasLoot difficulty metadata.
+- Raid AtlasLoot variants are included up to `Raid Max Difficulty` (`Normal`, `Heroic`, `Mythic`, `Ascended`) in `Interface -> AddOns -> ItemScore -> Loot Sources`.
 - Raids are individually toggleable in `Interface -> AddOns -> ItemScore -> Loot Sources` (grouped by expansion).
 - `/is atlas raid on|off`: convenience switch for all raids at once.
 - `/is atlas place on <Area Name>` / `/is atlas place off <Area Name>`: per-area toggle for locked/unavailable content.
@@ -162,15 +179,24 @@ Refresh triggers:
 ## Search Runtime
 - Search processing over large item catalogs runs in incremental per-frame batches with adaptive budget.
 - UI remains responsive while search progresses and updates asynchronously.
+- Item-info fetching is adaptive per frame: it starts conservatively, measures actual work time, raises throughput when cheap, lowers it when frames get expensive, and has per-item retry limits.
 - Optional search cap: `Max Required Level` limits visible results while leveling (toggle + value in the search window).
 - The default max-level value is the current character level until the player sets a custom value.
 - `Max Required Level` is a search-time filter only and does not invalidate/rebuild the cache.
 - LootCollector Worldforged tiers (`MC/BWL/Naxxramas`) are configurable in Loot Sources options.
+- AtlasLoot difficulty limits are cache-time filters because they change which item IDs are collected.
 
 ## Validation checklist
 - Search works when only ItemScore is enabled (shows "no source addons" state).
 - Search works with only LootCollector enabled.
 - Search works with only AtlasLoot enabled.
+- AtlasLoot Ascension 8.x beta (`Version: 8.0.0`) uses the `atlasloot_v8` adapter and does not depend on populated legacy `AtlasLoot_Data`.
+- Legacy AtlasLoot data still uses the `legacy` adapter when beta menu/item data is absent.
+- AtlasLoot module loading uses underscore addon names, e.g. `AtlasLoot_OriginalWoW`.
+- AtlasLoot dungeon search includes Heroic, base Mythic, and configured Mythic+ variants when `Dungeon Max Mythic Level` permits them.
+- AtlasLoot raid search includes Normal/Heroic/Mythic/Ascended variants only up to `Raid Max Difficulty`.
+- Search rows show known AtlasLoot item grades directly beside the item link, e.g. `[Wildfire Cape] (M+10)`.
+- Missing or custom item IDs must not keep the search button stuck on `Fetching...`; after retry limits, the search continues with available data.
 - Search works with both enabled and deduplicates cleanly.
 - Duplicate multi-source items remain represented (no silent overwrite).
 - No Lua errors when source addon loads later during session.
