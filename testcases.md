@@ -5,6 +5,9 @@
 - Disabled profiles must never contribute to aggregate/best score.
 - Primary Attribute `Armor` weight must affect armor stat contributions from `GetItemStats` (including legacy armor stat keys).
 - Rating key `Spell Penetration` must be configurable and contribute to scoring via `ITEM_MOD_SPELL_PENETRATION_SHORT`.
+- Weapon DPS must be configurable and contribute to scoring via `ITEM_MOD_DAMAGE_PER_SECOND_SHORT`.
+- Block rating and block value must be independently configurable and contribute via `ITEM_MOD_BLOCK_RATING_SHORT` and `ITEM_MOD_BLOCK_VALUE_SHORT`.
+- Holy, Fire, Nature, Frost, Shadow, and Arcane resistance weights must be independently configurable via `RESISTANCE1_NAME` through `RESISTANCE6_NAME`.
 
 ## Search data providers
 - ItemScore only (no LootCollector, no AtlasLoot): search opens and shows deterministic "no data source available" state without Lua errors.
@@ -31,7 +34,10 @@
 - Profile weapon-type filter supports multiple selections and must filter only weapon-like entries (`Weapon`, `Shield`, `Held In Off-hand`).
 - If no weapon type is selected in a profile filter, search must not apply any weapon-type restriction.
 - `Shield` and `Held In Off-hand` must be independently filterable (e.g. mage can disable shield, tank can disable held off-hand).
-- LootCollector Worldforged tier filters (`MC/BWL/Naxxramas`) must affect which Worldforged entries are added to search catalog.
+- LootCollector Worldforged tier filters (`ZG/MC/BWL/Naxxramas`) must affect which Worldforged entries are added to search catalog.
+- LootCollector Worldforged tier filters must include Zul'Gurub as the lowest configurable tier.
+- LootCollector Worldforged collection must keep base Worldforged discoveries visible when no Worldforged tier is selected.
+- Search must not show cached AtlasLoot M+ variants from an older source-settings fingerprint after the Mythic+ limit changes.
 - AtlasLoot area filter: `/is atlas place off <Area>` removes that area from search results.
 - Both addons: merged result deduplicates identical `(place, source, itemID)` triples and preserves multi-source items.
 - Late addon load (`ADDON_LOADED` during session): source catalog invalidates and rebuilds without UI reload.

@@ -5,6 +5,7 @@ local provider = {
 }
 
 local WORLDFORGED_TIERS = {
+	{ settingKey = "worldforgedZG", difficulty = 5, label = "Worldforged Zul'Gurub", difficultyLabel = "WF ZG" },
 	{ settingKey = "worldforgedMC", difficulty = 6, label = "Worldforged MC", difficultyLabel = "WF MC" },
 	{ settingKey = "worldforgedBWL", difficulty = 7, label = "Worldforged BWL", difficultyLabel = "WF BWL" },
 	{ settingKey = "worldforgedNaxx", difficulty = 9, label = "Worldforged Naxxramas", difficultyLabel = "WF Naxx" },
@@ -82,28 +83,44 @@ local function buildWorldforgedTierIDs(itemID, cache)
 	return tierIDs
 end
 
+local function hasSelectedWorldforgedTier(settings)
+	for _, tierDef in ipairs(WORLDFORGED_TIERS) do
+		if settings[tierDef.settingKey] then
+			return true
+		end
+	end
+	return false
+end
+
+local function hasAllWorldforgedTiersSelected(settings)
+	for _, tierDef in ipairs(WORLDFORGED_TIERS) do
+		if not settings[tierDef.settingKey] then
+			return false
+		end
+	end
+	return true
+end
+
 local function addWorldforgedMappings(state, addMapping, placeName, itemID)
 	local settings = state.settings
-	if not (settings.worldforgedMC or settings.worldforgedBWL or settings.worldforgedNaxx) then
-		return false
-	end
+	local hasTierFilter = hasSelectedWorldforgedTier(settings)
 
 	local tierIDs = buildWorldforgedTierIDs(itemID, state.worldforgedTierCache)
 	local added = false
 	for _, tierDef in ipairs(WORLDFORGED_TIERS) do
 		if settings[tierDef.settingKey] then
-				local tierItemID = tierIDs[tierDef.settingKey]
-				if tierItemID then
-					addMapping(placeName, tierDef.label, tierItemID, {
-						difficultyLabel = tierDef.difficultyLabel,
-						difficultyRank = tierDef.difficulty,
-					})
-					added = true
-				end
+			local tierItemID = tierIDs[tierDef.settingKey]
+			if tierItemID then
+				addMapping(placeName, tierDef.label, tierItemID, {
+					difficultyLabel = tierDef.difficultyLabel,
+					difficultyRank = tierDef.difficulty,
+				})
+				added = true
 			end
+		end
 	end
 
-	if not added and settings.worldforgedMC and settings.worldforgedBWL and settings.worldforgedNaxx then
+	if not added and (not hasTierFilter or hasAllWorldforgedTiersSelected(settings)) then
 		addMapping(placeName, "Worldforged", itemID)
 		added = true
 	end
@@ -124,6 +141,7 @@ function provider.StartCollect(settings)
 		vendorCursor = nil,
 		mode = "discoveries",
 		settings = {
+			worldforgedZG = settings and settings.worldforgedZG ~= false,
 			worldforgedMC = settings and settings.worldforgedMC ~= false,
 			worldforgedBWL = settings and settings.worldforgedBWL ~= false,
 			worldforgedNaxx = settings and settings.worldforgedNaxx ~= false,

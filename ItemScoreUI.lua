@@ -24,11 +24,14 @@ local STAT_GROUPS = {{
 	keys = {"ITEM_MOD_STRENGTH_SHORT", "ITEM_MOD_AGILITY_SHORT", "ITEM_MOD_INTELLECT_SHORT", "ITEM_MOD_STAMINA_SHORT", "ITEM_MOD_SPIRIT_SHORT", "ARMOR"}
 }, {
 	label = "Power",
-	keys = {"ITEM_MOD_ATTACK_POWER_SHORT", "ITEM_MOD_RANGED_ATTACK_POWER_SHORT", "ITEM_MOD_SPELL_POWER_SHORT"}
+	keys = {"ITEM_MOD_ATTACK_POWER_SHORT", "ITEM_MOD_RANGED_ATTACK_POWER_SHORT", "ITEM_MOD_SPELL_POWER_SHORT", "ITEM_MOD_DAMAGE_PER_SECOND_SHORT"}
 }, {
 	label = "Ratings",
 	keys = {"ITEM_MOD_HASTE_RATING_SHORT", "ITEM_MOD_CRIT_RATING_SHORT", "ITEM_MOD_HIT_RATING_SHORT", "ITEM_MOD_EXPERTISE_RATING_SHORT", "ITEM_MOD_ARMOR_PENETRATION_RATING_SHORT", "ITEM_MOD_SPELL_PENETRATION_SHORT", "ITEM_MOD_DEFENSE_SKILL_RATING_SHORT",
-         "ITEM_MOD_DODGE_RATING_SHORT", "ITEM_MOD_PARRY_RATING_SHORT", "ITEM_MOD_RESILIENCE_RATING_SHORT"}
+         "ITEM_MOD_DODGE_RATING_SHORT", "ITEM_MOD_PARRY_RATING_SHORT", "ITEM_MOD_BLOCK_RATING_SHORT", "ITEM_MOD_BLOCK_VALUE_SHORT", "ITEM_MOD_RESILIENCE_RATING_SHORT"}
+}, {
+	label = "Resistances",
+	keys = {"RESISTANCE1_NAME", "RESISTANCE2_NAME", "RESISTANCE3_NAME", "RESISTANCE4_NAME", "RESISTANCE5_NAME", "RESISTANCE6_NAME"}
 }}
 
 --------------------------------------------------
@@ -467,13 +470,13 @@ local function getSourceStatus()
 	}
 end
 
-local function setSourceOption(optionKey, value)
+local function setSourceOption(optionKey, value, skipRefreshQueue)
 	if type(addon.SetSearchSourceOption) ~= "function" then
 		print("|cffff7f00ItemScore:|r source manager unavailable.")
 		return false
 	end
 	local changed = addon.SetSearchSourceOption(optionKey, value)
-	if changed and optionKey ~= "searchMaxRequiredLevel" and type(addon.QueueSearchCacheRefresh) == "function" then
+	if changed and not skipRefreshQueue and optionKey ~= "searchMaxRequiredLevel" and type(addon.QueueSearchCacheRefresh) == "function" then
 		addon.QueueSearchCacheRefresh("options:" .. optionKey)
 	end
 	return changed
@@ -569,12 +572,14 @@ local function clampDungeonMaxMythicLevel(value)
 	return numeric, maxLevel
 end
 
-local function commitDungeonMaxMythicLevel(panel)
+local function commitDungeonMaxMythicLevel(panel, skipPanelRefresh, skipRefreshQueue)
 	if not panel or not panel.dungeonMaxMythicEdit then return end
 	local value = clampDungeonMaxMythicLevel(panel.dungeonMaxMythicEdit:GetText())
 	panel.dungeonMaxMythicEdit:SetText(tostring(value))
-	setSourceOption("atlasDungeonMaxMythicLevel", value)
-	refreshSourcesPanel(panel)
+	setSourceOption("atlasDungeonMaxMythicLevel", value, skipRefreshQueue)
+	if not skipPanelRefresh then
+		refreshSourcesPanel(panel)
+	end
 end
 
 local function hideRaidRows(panel)
@@ -674,6 +679,7 @@ refreshSourcesPanel = function(panel)
 
 	setCheckIfExists(panel.useLootCollector, settings.useLootCollector)
 	setCheckIfExists(panel.useAtlasLoot, settings.useAtlasLoot)
+	setCheckIfExists(panel.worldforgedZG, settings.worldforgedZG)
 	setCheckIfExists(panel.worldforgedMC, settings.worldforgedMC)
 	setCheckIfExists(panel.worldforgedBWL, settings.worldforgedBWL)
 	setCheckIfExists(panel.worldforgedNaxx, settings.worldforgedNaxx)
@@ -696,6 +702,7 @@ refreshSourcesPanel = function(panel)
 
 	local atlasEnabled = settings.useAtlasLoot and true or false
 	local lootCollectorEnabled = settings.useLootCollector and true or false
+	setButtonEnabled(panel.worldforgedZG, lootCollectorEnabled)
 	setButtonEnabled(panel.worldforgedMC, lootCollectorEnabled)
 	setButtonEnabled(panel.worldforgedBWL, lootCollectorEnabled)
 	setButtonEnabled(panel.worldforgedNaxx, lootCollectorEnabled)
@@ -745,6 +752,14 @@ SourcesPanel:SetScript("OnShow", function(self)
 			local wfLabel = self:CreateFontString(nil, "ARTWORK", "GameFontNormal")
 			wfLabel:SetPoint("TOPLEFT", 36, y)
 			wfLabel:SetText("LootCollector Worldforged Tiers")
+
+			y = y - 22
+			self.worldforgedZG = U.CreateCheckButton(self, "Zul'Gurub")
+			self.worldforgedZG:SetPoint("TOPLEFT", 40, y)
+			self.worldforgedZG:SetScript("OnClick", function(btn)
+				setSourceOption("worldforgedZG", btn:GetChecked())
+				refreshSourcesPanel(self)
+			end)
 
 			y = y - 22
 			self.worldforgedMC = U.CreateCheckButton(self, "MC")
@@ -858,6 +873,7 @@ SourcesPanel:SetScript("OnShow", function(self)
 		self.refreshCacheBtn = U.CreateButton(self, 150, HEADER_HEIGHT, "Refresh Cache Now")
 		self.refreshCacheBtn:SetPoint("TOPLEFT", 16, y)
 		self.refreshCacheBtn:SetScript("OnClick", function()
+			commitDungeonMaxMythicLevel(self, true, true)
 			if type(addon.RefreshSearchCache) == "function" then
 				local started, reason = addon.RefreshSearchCache(true, false)
 				if not started and reason == "busy" and type(addon.QueueSearchCacheRefresh) == "function" then
@@ -911,6 +927,10 @@ SourcesPanel:SetScript("OnShow", function(self)
 	end
 
 	refreshSourcesPanel(self)
+end)
+
+SourcesPanel:SetScript("OnHide", function(self)
+	commitDungeonMaxMythicLevel(self, true, false)
 end)
 
 InterfaceOptions_AddCategory(SourcesPanel)

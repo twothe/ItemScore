@@ -10,6 +10,7 @@
 - Keep background work schedulers single-shot (avoid combining immediate and queued refresh triggers for the same action).
 - Treat AtlasLoot dungeon/raid difficulty limits as cache-time filters because they change collected item IDs.
 - Detect AtlasLoot data layout at runtime; prefer the 8.x beta menu/item adapter and keep legacy `AtlasLoot_Data` as fallback.
+- Keep LootCollector Worldforged tier filtering inclusive from Zul'Gurub upward, and treat no selected Worldforged tier as an unfiltered base Worldforged discovery view.
 - Keep search usable when custom item IDs never resolve through `GetItemInfo`; unresolved IDs must be bounded by retry/timeout behavior.
 - Keep item-info fetching adaptive per frame so the addon maximizes throughput without unbounded frame spikes.
 

@@ -26,7 +26,7 @@ Target source shape remains:
 Important limitation:
 - LootCollector discovery records do not provide boss/NPC source names for normal drops.
 - Vendors are source-specific (`vendorName`) and can be represented as dedicated sources.
-- Worldforged tier information (MC/BWL/Naxxramas) is not stored directly in discovery records; it must be inferred via `GetItemDifficultyID(itemID, difficulty)`.
+- Worldforged tier information (ZG/MC/BWL/Naxxramas) is not stored directly in discovery records; it must be inferred via `GetItemDifficultyID(itemID, difficulty)`.
 
 ### AtlasLoot
 - Main addon object: `ATLASLOOT` / `LibStub("AceAddon-3.0"):GetAddon("AtlasLoot")`.
@@ -183,7 +183,7 @@ Refresh triggers:
 - Optional search cap: `Max Required Level` limits visible results while leveling (toggle + value in the search window).
 - The default max-level value is the current character level until the player sets a custom value.
 - `Max Required Level` is a search-time filter only and does not invalidate/rebuild the cache.
-- LootCollector Worldforged tiers (`MC/BWL/Naxxramas`) are configurable in Loot Sources options.
+- LootCollector Worldforged tiers (`ZG/MC/BWL/Naxxramas`) are configurable in Loot Sources options; if no tier is selected, the base Worldforged discovery item remains visible.
 - AtlasLoot difficulty limits are cache-time filters because they change which item IDs are collected.
 
 ## Validation checklist
@@ -194,6 +194,7 @@ Refresh triggers:
 - Legacy AtlasLoot data still uses the `legacy` adapter when beta menu/item data is absent.
 - AtlasLoot module loading uses underscore addon names, e.g. `AtlasLoot_OriginalWoW`.
 - AtlasLoot dungeon search includes Heroic, base Mythic, and configured Mythic+ variants when `Dungeon Max Mythic Level` permits them.
+- Search must not use a source cache built for older loot-source settings; changed settings require a rebuild before results are shown.
 - AtlasLoot raid search includes Normal/Heroic/Mythic/Ascended variants only up to `Raid Max Difficulty`.
 - Search rows show known AtlasLoot item grades directly beside the item link, e.g. `[Wildfire Cape] (M+10)`.
 - Missing or custom item IDs must not keep the search button stuck on `Fetching...`; after retry limits, the search continues with available data.

@@ -16,7 +16,7 @@
 - `LootCollector`
 - `AtlasLoot`
 
-You can configure which providers to use. AtlasLoot search data supports both legacy AtlasLoot data and the Ascension 8.x beta layout, plus configurable dungeon and raid difficulty limits in `/itemscore` -> `Loot Sources`.
+You can configure which providers to use. AtlasLoot search data supports both legacy AtlasLoot data and the Ascension 8.x beta layout, plus configurable dungeon and raid difficulty limits in `/itemscore` -> `Loot Sources`. LootCollector Worldforged filters cover ZG/MC/BWL/Naxxramas, and an empty tier selection still shows base Worldforged discoveries.
 
 ## Installation
 1. Download the ZIP from [Releases](https://github.com/twothe/ItemScore/releases/latest).

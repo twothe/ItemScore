@@ -80,6 +80,7 @@ local function defaultSourceSettings()
 		atlasRaidMaxDifficulty = DEFAULT_ATLAS_RAID_MAX_DIFFICULTY,
 		atlasDisabledPlaces = {},
 		atlasDisabledRaids = {},
+		worldforgedZG = true,
 		worldforgedMC = true,
 		worldforgedBWL = true,
 		worldforgedNaxx = true,
@@ -144,6 +145,7 @@ local function snapshotSettings(settings)
 		atlasWrath = settings.atlasWrath and true or false,
 		atlasDungeonMaxMythicLevel = normalizeAtlasDungeonMaxMythicLevel(settings.atlasDungeonMaxMythicLevel),
 		atlasRaidMaxDifficulty = normalizeAtlasRaidMaxDifficulty(settings.atlasRaidMaxDifficulty),
+		worldforgedZG = settings.worldforgedZG and true or false,
 		worldforgedMC = settings.worldforgedMC and true or false,
 		worldforgedBWL = settings.worldforgedBWL and true or false,
 		worldforgedNaxx = settings.worldforgedNaxx and true or false,
@@ -227,6 +229,7 @@ local function settingsFingerprint(settings)
 		settings.atlasWrath and "1" or "0",
 		tostring(normalizeAtlasDungeonMaxMythicLevel(settings.atlasDungeonMaxMythicLevel)),
 		tostring(normalizeAtlasRaidMaxDifficulty(settings.atlasRaidMaxDifficulty)),
+		settings.worldforgedZG and "1" or "0",
 		settings.worldforgedMC and "1" or "0",
 		settings.worldforgedBWL and "1" or "0",
 		settings.worldforgedNaxx and "1" or "0",
@@ -235,6 +238,10 @@ local function settingsFingerprint(settings)
 	}
 
 	return table.concat(parts, "|")
+end
+
+local function isCacheSettingsMismatched(settings, cache)
+	return cache.settingsFingerprint ~= settingsFingerprint(settings)
 end
 
 local function scheduleAfter(seconds, callback)
@@ -411,7 +418,7 @@ local function isCacheStale(settings, cache)
 	if runtime.forceRefresh then return true end
 	if cache.lastBuildAt <= 0 then return true end
 	if (time() - cache.lastBuildAt) >= CACHE_REFRESH_INTERVAL_SECONDS then return true end
-	if cache.settingsFingerprint ~= settingsFingerprint(settings) then return true end
+	if isCacheSettingsMismatched(settings, cache) then return true end
 	return false
 end
 
@@ -880,6 +887,7 @@ function addon.GetSearchCacheStatus()
 	return {
 		updating = runtime.updating,
 		stale = stale,
+		settingsChanged = isCacheSettingsMismatched(settings, cache),
 		lastBuildAt = cache.lastBuildAt,
 		itemCount = #(catalog.itemIDs or {}),
 		lastError = runtime.lastError,

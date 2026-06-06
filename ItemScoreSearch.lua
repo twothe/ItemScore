@@ -291,6 +291,7 @@ local function fallbackStatus(errorText)
 		lastError = errorText or "Search source manager unavailable",
 		enabledProviderCount = 0,
 		availableProviderCount = 0,
+		settingsChanged = false,
 		providers = {},
 	}
 end
@@ -536,14 +537,17 @@ UIDropDownMenu_SetWidth(slotDrop, 100)
 UIDropDownMenu_SetSelectedValue(slotDrop, selectedSlot)
 
 local function cacheStatusToMessage(status)
-	if status.updating and status.itemCount == 0 then
-		return "Building search cache in background. Try again shortly."
-	end
 	if status.enabledProviderCount == 0 then
 		return "No search data source enabled. Enable them in Interface -> AddOns -> ItemScore -> Loot Sources (or use /is lootcollector on, /is atlas on)."
 	end
 	if status.availableProviderCount == 0 then
 		return "No supported source addon loaded (LootCollector / AtlasLoot)."
+	end
+	if status.settingsChanged then
+		return "Search cache is rebuilding after loot-source setting changes. Try again shortly."
+	end
+	if status.updating and status.itemCount == 0 then
+		return "Building search cache in background. Try again shortly."
 	end
 	if status.itemCount == 0 then
 		return "Search cache empty. Refresh in ItemScore -> Loot Sources or use /is refresh."
@@ -783,6 +787,20 @@ local function doSearch()
 	if not selectedProfile or not selectedSlot then return end
 
 	local catalog, cacheStatus = getCatalogAndStatus()
+	if cacheStatus.settingsChanged then
+		if cacheStatus.enabledProviderCount > 0 then
+			refreshCacheSafe(true, true)
+			catalog, cacheStatus = getCatalogAndStatus()
+		end
+		if cacheStatus.settingsChanged or cacheStatus.updating or cacheStatus.enabledProviderCount == 0 then
+			resetSearchButton()
+			refreshRows({
+				{ isHeader = true, label = cacheStatusToMessage(cacheStatus) },
+			})
+			return
+		end
+	end
+
 	if #(catalog.itemIDs or {}) == 0 and cacheStatus.enabledProviderCount > 0 and not cacheStatus.updating then
 		refreshCacheSafe(true, true)
 		catalog, cacheStatus = getCatalogAndStatus()
