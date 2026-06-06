@@ -162,7 +162,7 @@ Refresh triggers:
 - `/is atlas on|off`: enable/disable AtlasLoot provider.
 - `/is atlas classic|tbc|wrath on|off`: expansion filters.
 - Dungeons are always enabled for active expansions.
-- Dungeon AtlasLoot variants are included up to `Dungeon Max Mythic Level` in `Interface -> AddOns -> ItemScore -> Loot Sources`; `0` means base Mythic and the upper bound follows AtlasLoot difficulty metadata.
+- Dungeon AtlasLoot variants are included up to the requested `Dungeon Max Mythic Level` in `Interface -> AddOns -> ItemScore -> Loot Sources`; `0` means base Mythic. The input is not upper-capped, while effective results are naturally limited by AtlasLoot difficulty metadata or missing difficulty IDs.
 - Raid AtlasLoot variants are included up to `Raid Max Difficulty` (`Normal`, `Heroic`, `Mythic`, `Ascended`) in `Interface -> AddOns -> ItemScore -> Loot Sources`.
 - Raids are individually toggleable in `Interface -> AddOns -> ItemScore -> Loot Sources` (grouped by expansion).
 - `/is atlas raid on|off`: convenience switch for all raids at once.

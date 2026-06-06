@@ -43,6 +43,22 @@ local WEAPON_TYPE_FILTER_ORDER = {
 -- Data Handling
 --------------------------------------------------
 
+local function createProfile()
+	return {
+		weights = {},
+		enabled = true,
+		collapsed = false,
+		armorTypeFilter = {},
+		weaponTypeFilter = {},
+	}
+end
+
+local function invalidateEquipScores()
+	if type(addon.InvalidateEquipScores) == "function" then
+		addon.InvalidateEquipScores()
+	end
+end
+
 local function normalizeArmorTypeFilter(filterTable)
 	if type(filterTable) ~= "table" then
 		return {}
@@ -89,13 +105,7 @@ local function ensureData()
 	if not ItemScoreData then ItemScoreData = {} end
 	if not ItemScoreData.profiles then
 		ItemScoreData.profiles = {
-			["DPS"] = {
-				weights = {},
-				enabled = true,
-				collapsed = false,
-				armorTypeFilter = {},
-				weaponTypeFilter = {},
-			}
+			["DPS"] = createProfile()
 		}
 		ItemScoreData.order = {"DPS"}
 		ItemScoreData.activeProfile = "DPS"
@@ -114,13 +124,7 @@ end
 local function getProfile(name)
 	ensureData()
 	if not ItemScoreData.profiles[name] then
-		ItemScoreData.profiles[name] = {
-			weights = {},
-			enabled = true,
-			collapsed = false,
-			armorTypeFilter = {},
-			weaponTypeFilter = {},
-		}
+		ItemScoreData.profiles[name] = createProfile()
 		table.insert(ItemScoreData.order, name)
 	end
 	normalizeProfile(ItemScoreData.profiles[name])
@@ -132,33 +136,35 @@ function addon.GetProfiles() return getData().order end
 function addon.GetProfileData(name) return getProfile(name) end
 
 function addon.AddProfile(name)
-	if name == "" or ItemScoreData.profiles[name] then return false end
-	ItemScoreData.profiles[name] = {
-		weights = {},
-		enabled = true,
-		collapsed = false,
-		armorTypeFilter = {},
-		weaponTypeFilter = {},
-	}
-	table.insert(ItemScoreData.order, name)
+	if type(name) ~= "string" then return false end
+	local data = getData()
+	if name == "" or data.profiles[name] then return false end
+	data.profiles[name] = createProfile()
+	table.insert(data.order, name)
+	invalidateEquipScores()
 	return true
 end
 
 function addon.DeleteProfile(name)
-	ItemScoreData.profiles[name] = nil
-	for i, n in ipairs(ItemScoreData.order) do
+	if type(name) ~= "string" then return false end
+	local data = getData()
+	if not data.profiles[name] then return false end
+	data.profiles[name] = nil
+	for i, n in ipairs(data.order) do
 		if n == name then
-			table.remove(ItemScoreData.order, i)
+			table.remove(data.order, i)
 			break
 		end
 	end
-	if #ItemScoreData.order == 0 then addon.AddProfile("DPS") end
-	if ItemScoreData.activeProfile == name then ItemScoreData.activeProfile = ItemScoreData.order[1] end
+	if #data.order == 0 then addon.AddProfile("DPS") end
+	if data.activeProfile == name then data.activeProfile = data.order[1] end
+	invalidateEquipScores()
 	return true
 end
 
 function addon.MoveProfile(name, direction)
-	local order = ItemScoreData.order
+	if type(name) ~= "string" then return end
+	local order = getData().order
 	for i, n in ipairs(order) do
 		if n == name then
 			local target = i + direction
@@ -169,7 +175,13 @@ function addon.MoveProfile(name, direction)
 	end
 end
 
-function addon.SetActiveProfile(name) ItemScoreData.activeProfile = name end
+function addon.SetActiveProfile(name)
+	if type(name) ~= "string" then return end
+	local data = getData()
+	if data.profiles[name] then
+		data.activeProfile = name
+	end
+end
 
 function addon.ToggleProfileEnabled(name)
 	local profile = getProfile(name)
@@ -182,11 +194,16 @@ function addon.ToggleProfileCollapsed(name)
 end
 
 function addon.SetWeight(profileName, statKey, value)
+	if type(profileName) ~= "string" or type(statKey) ~= "string" then return end
 	local profile = getProfile(profileName)
+	local oldValue = profile.weights[statKey]
 	if value == nil or value == "" then
 		profile.weights[statKey] = nil
 	else
 		profile.weights[statKey] = value
+	end
+	if oldValue ~= profile.weights[statKey] then
+		invalidateEquipScores()
 	end
 end
 
@@ -265,7 +282,7 @@ end
 --------------------------------------------------
 
 local function normalizeScore(score, itemLink)
-	local invType = inventoryType(itemLink)
+	local invType = addon.GetInventoryType(itemLink)
 	if invType == "INVTYPE_2HWEAPON" then
 		return score / 2
 	else

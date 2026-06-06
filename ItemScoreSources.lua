@@ -55,7 +55,6 @@ end
 local function normalizeAtlasDungeonMaxMythicLevel(value)
 	local numeric = math.floor(tonumber(value) or 0)
 	if numeric < 0 then numeric = 0 end
-	if numeric > MAX_DUNGEON_MYTHIC_LEVEL_FALLBACK then numeric = MAX_DUNGEON_MYTHIC_LEVEL_FALLBACK end
 	return numeric
 end
 
@@ -272,23 +271,7 @@ local function nowMillis()
 end
 
 local function tuneBudget(currentBudget, elapsedMs, targetMs)
-	local budget = tonumber(currentBudget) or 200
-	if budget < 20 then budget = 20 end
-	if elapsedMs <= 0 then
-		budget = budget * 1.2
-	elseif elapsedMs < (targetMs * 0.7) then
-		budget = budget * 1.25
-	elseif elapsedMs > (targetMs * 1.6) then
-		budget = budget * 0.60
-	elseif elapsedMs > (targetMs * 1.2) then
-		budget = budget * 0.80
-	elseif elapsedMs < (targetMs * 0.9) then
-		budget = budget * 1.08
-	end
-	budget = math.floor(budget + 0.5)
-	if budget < 20 then budget = 20 end
-	if budget > 10000 then budget = 10000 end
-	return budget
+	return addon.TuneAdaptiveBudget(currentBudget, elapsedMs, targetMs, 20, 10000)
 end
 
 local function providerEnabled(providerKey, settings)
@@ -904,9 +887,14 @@ function addon.GetSearchCatalog()
 	local settings = ensureSettings()
 	local cache = ensureCache()
 
+	local settingsChanged = isCacheSettingsMismatched(settings, cache)
 	local stale = isCacheStale(settings, cache)
-	if stale and not runtime.updating then
+	if stale and not settingsChanged and not runtime.updating then
 		addon.QueueSearchCacheRefresh("stale")
+	end
+
+	if settingsChanged then
+		return EMPTY_CATALOG, addon.GetSearchCacheStatus()
 	end
 
 	return cache.catalog or EMPTY_CATALOG, addon.GetSearchCacheStatus()

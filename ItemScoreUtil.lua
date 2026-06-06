@@ -1,5 +1,7 @@
 local addonName, addon = ...
 
+-- Shared helpers for ItemScore UI construction, item classification, and debug-safe formatting.
+
 local counter = 0
 local function unique(prefix)
 	counter = counter + 1
@@ -143,6 +145,28 @@ function addon.NormalizeWeaponType(itemType, subType, invType)
 	return WEAPON_SUBTYPE_LOOKUP[normalizedSubType]
 end
 
+function addon.TuneAdaptiveBudget(currentBudget, elapsedMs, targetMs, minBudget, maxBudget)
+	local budget = tonumber(currentBudget) or minBudget or 200
+	local minValue = tonumber(minBudget) or 20
+	local maxValue = tonumber(maxBudget) or 10000
+	if budget < minValue then budget = minValue end
+	if elapsedMs <= 0 then
+		budget = budget * 1.2
+	elseif elapsedMs < (targetMs * 0.7) then
+		budget = budget * 1.25
+	elseif elapsedMs > (targetMs * 1.6) then
+		budget = budget * 0.60
+	elseif elapsedMs > (targetMs * 1.2) then
+		budget = budget * 0.80
+	elseif elapsedMs < (targetMs * 0.9) then
+		budget = budget * 1.08
+	end
+	budget = math.floor(budget + 0.5)
+	if budget < minValue then budget = minValue end
+	if budget > maxValue then budget = maxValue end
+	return budget
+end
+
 local armorAllowed = {
 	WARRIOR = {
 		Cloth = true,
@@ -239,7 +263,7 @@ function addon.CanPlayerEquip(itemLink)
 	return true
 end
 
-function inventoryType(itemLink)
+function addon.GetInventoryType(itemLink)
 	local _, _, _, _, _, _, _, _, invType = GetItemInfo(itemLink)
 	if (invType == nil or strtrim(invType) == "") then
 		return nil
@@ -248,7 +272,7 @@ function inventoryType(itemLink)
 	end
 end
 
-function tableToString(tbl, indent, visited)
+function addon.TableToString(tbl, indent, visited)
 	indent = indent or 0
 	visited = visited or {}
 
@@ -264,7 +288,7 @@ function tableToString(tbl, indent, visited)
 		local valueType = type(v)
 
 		if valueType == "table" then
-			valueStr = tableToString(v, indent + 1, visited)
+			valueStr = addon.TableToString(v, indent + 1, visited)
 		elseif valueType == "string" then
 			valueStr = "\"" .. v .. "\""
 		else
@@ -277,5 +301,3 @@ function tableToString(tbl, indent, visited)
 	table.insert(lines, string.rep("  ", indent) .. "}")
 	return table.concat(lines, "\n")
 end
-
-_G.addon = addon

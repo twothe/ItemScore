@@ -8,7 +8,11 @@
 - Treat external loot providers (`LootCollector`, `AtlasLoot`) as optional; never hard-fail when absent.
 - Keep async callback dispatch reentrancy-safe (callbacks may enqueue new callbacks while running).
 - Keep background work schedulers single-shot (avoid combining immediate and queued refresh triggers for the same action).
+- Bump `## Version:` in `ItemScore.toc` whenever addon code changes are made for release.
 - Treat AtlasLoot dungeon/raid difficulty limits as cache-time filters because they change collected item IDs.
+- Store the user's requested Mythic+ cap without an upper input clamp; provider metadata or missing difficulty IDs define the effective collected maximum.
+- Never return or search a catalog built for a different loot-source settings fingerprint.
+- Invalidate equipped-score caches whenever profile scoring weights or profile identities change.
 - Detect AtlasLoot data layout at runtime; prefer the 8.x beta menu/item adapter and keep legacy `AtlasLoot_Data` as fallback.
 - Keep LootCollector Worldforged tier filtering inclusive from Zul'Gurub upward, and treat no selected Worldforged tier as an unfiltered base Worldforged discovery view.
 - Keep search usable when custom item IDs never resolve through `GetItemInfo`; unresolved IDs must be bounded by retry/timeout behavior.

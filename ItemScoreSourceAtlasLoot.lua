@@ -80,8 +80,9 @@ local function loadAddonIfInstalled(addonName)
 	if addonLoaded(addonName) then return true end
 	if not addonInstalled(addonName) then return false end
 	if type(LoadAddOn) ~= "function" then return false end
-	local ok = pcall(LoadAddOn, addonName)
-	return ok and (addonLoaded(addonName) or true)
+	local ok, loaded = pcall(LoadAddOn, addonName)
+	if not ok then return false end
+	return addonLoaded(addonName) or loaded == true or loaded == 1
 end
 
 local function resolveAtlasLootObject()
@@ -118,7 +119,6 @@ end
 local function normalizeDungeonMaxMythicLevel(value)
 	local numeric = math.floor(tonumber(value) or 0)
 	if numeric < 0 then numeric = 0 end
-	if numeric > MAX_DUNGEON_MYTHIC_LEVEL_FALLBACK then numeric = MAX_DUNGEON_MYTHIC_LEVEL_FALLBACK end
 	return numeric
 end
 
@@ -159,10 +159,10 @@ end
 local function loadAtlasLootModule(atlasLoot, moduleName)
 	if not moduleName then return end
 	if atlasLoot and type(atlasLoot.IsLootTableAvailable) == "function" then
-		local ok = pcall(atlasLoot.IsLootTableAvailable, atlasLoot, moduleName)
-		if ok then return end
+		local ok, available = pcall(atlasLoot.IsLootTableAvailable, atlasLoot, moduleName)
+		if ok and (available or addonLoaded(moduleName)) then return true end
 	end
-	loadAddonIfInstalled(moduleName)
+	return loadAddonIfInstalled(moduleName)
 end
 
 local function ensureExpansionModulesLoaded(atlasLoot, settings, includeAllExpansions)
@@ -232,6 +232,8 @@ local function selectedMaxDifficultyForSource(state, sourceMeta, itemRow)
 	end
 	if atlasMax and atlasMax < selectedMax then
 		selectedMax = atlasMax
+	elseif sourceMeta and sourceMeta.isDungeon and selectedMax > (DIFFICULTY_MYTHIC + MAX_DUNGEON_MYTHIC_LEVEL_FALLBACK) then
+		selectedMax = DIFFICULTY_MYTHIC + MAX_DUNGEON_MYTHIC_LEVEL_FALLBACK
 	end
 	if selectedMax < DIFFICULTY_NORMAL then
 		selectedMax = DIFFICULTY_NORMAL

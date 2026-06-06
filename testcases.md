@@ -8,6 +8,8 @@
 - Weapon DPS must be configurable and contribute to scoring via `ITEM_MOD_DAMAGE_PER_SECOND_SHORT`.
 - Block rating and block value must be independently configurable and contribute via `ITEM_MOD_BLOCK_RATING_SHORT` and `ITEM_MOD_BLOCK_VALUE_SHORT`.
 - Holy, Fire, Nature, Frost, Shadow, and Arcane resistance weights must be independently configurable via `RESISTANCE1_NAME` through `RESISTANCE6_NAME`.
+- Changing a profile stat weight must invalidate equipped-score caches before the next delta/upgrade calculation.
+- Deleting and recreating a profile name must not reuse stale equipped scores from the deleted profile.
 
 ## Search data providers
 - ItemScore only (no LootCollector, no AtlasLoot): search opens and shows deterministic "no data source available" state without Lua errors.
@@ -21,6 +23,7 @@
 - AtlasLoot expansion filters (`classic/tbc/wrath`) immediately change cache contents after refresh.
 - AtlasLoot dungeons are always included for enabled expansions and cannot be disabled independently.
 - AtlasLoot dungeon difficulty limit: default `Dungeon Max Mythic Level = 0` includes Heroic and base Mythic variants; raising the value includes Mythic+ item IDs up to the AtlasLoot-supported maximum.
+- AtlasLoot dungeon difficulty input must preserve user values above the currently supported maximum; effective results are naturally capped by AtlasLoot difficulty metadata or missing difficulty IDs.
 - AtlasLoot raid difficulty limit: `Normal`, `Heroic`, `Mythic`, and `Ascended` include only variants at or below the selected maximum.
 - AtlasLoot search row display must show item grade next to the item link when known, e.g. `[Wildfire Cape] (M+10)`, `[Item] (Asc)`.
 - AtlasLoot raids are individually toggleable in `Interface -> AddOns -> ItemScore -> Loot Sources`, grouped by expansion.
@@ -34,6 +37,7 @@
 - Profile weapon-type filter supports multiple selections and must filter only weapon-like entries (`Weapon`, `Shield`, `Held In Off-hand`).
 - If no weapon type is selected in a profile filter, search must not apply any weapon-type restriction.
 - `Shield` and `Held In Off-hand` must be independently filterable (e.g. mage can disable shield, tank can disable held off-hand).
+- Upgrade delta and upgrade search must support `INVTYPE_WEAPONMAINHAND`, `INVTYPE_WEAPONOFFHAND`, `INVTYPE_THROWN`, and `INVTYPE_RELIC`.
 - LootCollector Worldforged tier filters (`ZG/MC/BWL/Naxxramas`) must affect which Worldforged entries are added to search catalog.
 - LootCollector Worldforged tier filters must include Zul'Gurub as the lowest configurable tier.
 - LootCollector Worldforged collection must keep base Worldforged discoveries visible when no Worldforged tier is selected.

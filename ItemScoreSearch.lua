@@ -4,7 +4,8 @@ local LIST_UPGRADES_MAX = 6
 local LIST_SLOT_MAX = 20
 
 local Search = {}
-_G.ItemScoreSearch = Search
+addon.Search = Search
+local Query = addon.Query
 
 --------------------------------------------------
 -- Slot mapping
@@ -28,7 +29,7 @@ local SLOT_MAP = {
 	{ label = "Off-Hand", inv = { "INVTYPE_WEAPONOFFHAND", "INVTYPE_HOLDABLE" } },
 	{ label = "Shield", inv = { "INVTYPE_SHIELD" } },
 	{ label = "2H Weapon", inv = { "INVTYPE_2HWEAPON" } },
-	{ label = "Ranged Weapon", inv = { "INVTYPE_RANGED", "INVTYPE_RANGEDRIGHT" } },
+	{ label = "Ranged Weapon", inv = { "INVTYPE_RANGED", "INVTYPE_RANGEDRIGHT", "INVTYPE_THROWN", "INVTYPE_RELIC" } },
 }
 
 local slotLabelToInv = {}
@@ -103,23 +104,7 @@ local function nowMillis()
 end
 
 local function tuneBudget(currentBudget, elapsedMs, targetMs)
-	local budget = tonumber(currentBudget) or 200
-	if budget < 20 then budget = 20 end
-	if elapsedMs <= 0 then
-		budget = budget * 1.2
-	elseif elapsedMs < (targetMs * 0.7) then
-		budget = budget * 1.25
-	elseif elapsedMs > (targetMs * 1.6) then
-		budget = budget * 0.60
-	elseif elapsedMs > (targetMs * 1.2) then
-		budget = budget * 0.80
-	elseif elapsedMs < (targetMs * 0.9) then
-		budget = budget * 1.08
-	end
-	budget = math.floor(budget + 0.5)
-	if budget < 20 then budget = 20 end
-	if budget > 8000 then budget = 8000 end
-	return budget
+	return addon.TuneAdaptiveBudget(currentBudget, elapsedMs, targetMs, 20, 8000)
 end
 
 local function insertTop(list, itemData, maxItems)
@@ -573,7 +558,7 @@ end
 local function scheduleSearchAfterItemInfo()
 	if pendingQueryRefresh then return end
 	pendingQueryRefresh = true
-	ItemScoreQuery.RegisterDone(function()
+	Query.RegisterDone(function()
 		pendingQueryRefresh = false
 		if frame:IsShown() then
 			Search.DoSearch()
@@ -610,7 +595,7 @@ local function processSearchTask(state, maxOps)
 		local raw = "item:" .. itemID .. ":::::::::"
 		local name, link, rarity, _, requiredLevel, itemType, subType, _, invType, icon = GetItemInfo(raw)
 		if not name then
-			if not ItemScoreQuery.Add(itemID) then
+			if not Query.Add(itemID) then
 				state.skippedItemInfo = true
 			end
 			state.missingItemInfo = true
@@ -677,7 +662,7 @@ local function finishSearchTask(state)
 	searchWorker:SetScript("OnUpdate", nil)
 
 	local rowsData = state.finalRows or {}
-	if ItemScoreQuery.IsBusy() then
+	if Query.IsBusy() then
 		if #rowsData > 0 then
 			refreshRows(rowsData)
 		else

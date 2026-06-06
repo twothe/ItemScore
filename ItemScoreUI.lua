@@ -18,6 +18,11 @@ local STAT_FIELD_HEIGHT = 24
 local STATS_LEFT_PAD = 16
 local STAT_FIRST_COL_X = STATS_LEFT_PAD
 local STAT_SECOND_COL_X = STATS_LEFT_PAD + 240
+local DUNGEON_MAX_MYTHIC_LEVEL_FALLBACK = 40
+
+local STAT_LABEL_OVERRIDES = {
+	ITEM_MOD_DAMAGE_PER_SECOND_SHORT = "Weapon DPS",
+}
 
 local STAT_GROUPS = {{
 	label = "Primary Attributes",
@@ -25,14 +30,18 @@ local STAT_GROUPS = {{
 }, {
 	label = "Power",
 	keys = {"ITEM_MOD_ATTACK_POWER_SHORT", "ITEM_MOD_RANGED_ATTACK_POWER_SHORT", "ITEM_MOD_SPELL_POWER_SHORT", "ITEM_MOD_DAMAGE_PER_SECOND_SHORT"}
-}, {
-	label = "Ratings",
-	keys = {"ITEM_MOD_HASTE_RATING_SHORT", "ITEM_MOD_CRIT_RATING_SHORT", "ITEM_MOD_HIT_RATING_SHORT", "ITEM_MOD_EXPERTISE_RATING_SHORT", "ITEM_MOD_ARMOR_PENETRATION_RATING_SHORT", "ITEM_MOD_SPELL_PENETRATION_SHORT", "ITEM_MOD_DEFENSE_SKILL_RATING_SHORT",
-         "ITEM_MOD_DODGE_RATING_SHORT", "ITEM_MOD_PARRY_RATING_SHORT", "ITEM_MOD_BLOCK_RATING_SHORT", "ITEM_MOD_BLOCK_VALUE_SHORT", "ITEM_MOD_RESILIENCE_RATING_SHORT"}
-}, {
-	label = "Resistances",
-	keys = {"RESISTANCE1_NAME", "RESISTANCE2_NAME", "RESISTANCE3_NAME", "RESISTANCE4_NAME", "RESISTANCE5_NAME", "RESISTANCE6_NAME"}
-}}
+	}, {
+		label = "Ratings",
+		keys = {"ITEM_MOD_HASTE_RATING_SHORT", "ITEM_MOD_CRIT_RATING_SHORT", "ITEM_MOD_HIT_RATING_SHORT", "ITEM_MOD_EXPERTISE_RATING_SHORT", "ITEM_MOD_ARMOR_PENETRATION_RATING_SHORT", "ITEM_MOD_SPELL_PENETRATION_SHORT", "ITEM_MOD_DEFENSE_SKILL_RATING_SHORT",
+			"ITEM_MOD_DODGE_RATING_SHORT", "ITEM_MOD_PARRY_RATING_SHORT", "ITEM_MOD_BLOCK_RATING_SHORT", "ITEM_MOD_BLOCK_VALUE_SHORT", "ITEM_MOD_RESILIENCE_RATING_SHORT"}
+	}, {
+		label = "Resistances",
+		keys = {"RESISTANCE1_NAME", "RESISTANCE2_NAME", "RESISTANCE3_NAME", "RESISTANCE4_NAME", "RESISTANCE5_NAME", "RESISTANCE6_NAME"}
+	}}
+
+local function statLabel(statKey)
+	return STAT_LABEL_OVERRIDES[statKey] or _G[statKey] or statKey
+end
 
 --------------------------------------------------
 -- Popup Manager
@@ -179,7 +188,7 @@ function ProfileComponent:buildStats()
 			lbl:SetPoint("LEFT", edit, "RIGHT", 6, 0)
 			lbl:SetWidth(120)
 			lbl:SetJustifyH("LEFT")
-			lbl:SetText(_G[key] or key)
+			lbl:SetText(statLabel(key))
 
 			edit:Show()
 			lbl:Show()
@@ -532,9 +541,9 @@ end
 
 local function getAtlasDungeonMaxMythicLevel()
 	if type(addon.GetAtlasLootMaxDungeonMythicLevel) ~= "function" then
-		return 40
+		return DUNGEON_MAX_MYTHIC_LEVEL_FALLBACK
 	end
-	local maxLevel = math.floor(tonumber(addon.GetAtlasLootMaxDungeonMythicLevel()) or 40)
+	local maxLevel = math.floor(tonumber(addon.GetAtlasLootMaxDungeonMythicLevel()) or DUNGEON_MAX_MYTHIC_LEVEL_FALLBACK)
 	if maxLevel < 0 then maxLevel = 0 end
 	return maxLevel
 end
@@ -564,21 +573,27 @@ local function getRaidDifficultyLabel(value)
 	return "Mythic"
 end
 
-local function clampDungeonMaxMythicLevel(value)
-	local maxLevel = getAtlasDungeonMaxMythicLevel()
+local function normalizeDungeonMaxMythicLevelInput(value, allowBlank)
+	if allowBlank and tostring(value or "") == "" then return nil end
 	local numeric = math.floor(tonumber(value) or 0)
 	if numeric < 0 then numeric = 0 end
-	if numeric > maxLevel then numeric = maxLevel end
-	return numeric, maxLevel
+	return numeric
 end
 
 local function commitDungeonMaxMythicLevel(panel, skipPanelRefresh, skipRefreshQueue)
 	if not panel or not panel.dungeonMaxMythicEdit then return end
-	local value = clampDungeonMaxMythicLevel(panel.dungeonMaxMythicEdit:GetText())
+	local value = normalizeDungeonMaxMythicLevelInput(panel.dungeonMaxMythicEdit:GetText())
 	panel.dungeonMaxMythicEdit:SetText(tostring(value))
 	setSourceOption("atlasDungeonMaxMythicLevel", value, skipRefreshQueue)
 	if not skipPanelRefresh then
 		refreshSourcesPanel(panel)
+	end
+end
+
+local function saveDungeonMaxMythicLevelDraft(panel, text)
+	local value = normalizeDungeonMaxMythicLevelInput(text, true)
+	if value ~= nil then
+		setSourceOption("atlasDungeonMaxMythicLevel", value, false)
 	end
 end
 
@@ -687,12 +702,13 @@ refreshSourcesPanel = function(panel)
 	setCheckIfExists(panel.atlasTBC, settings.atlasTBC)
 	setCheckIfExists(panel.atlasWrath, settings.atlasWrath)
 	if panel.dungeonMaxMythicEdit then
-		local dungeonMaxLevel, availableMaxLevel = clampDungeonMaxMythicLevel(settings.atlasDungeonMaxMythicLevel)
+		local dungeonMaxLevel = normalizeDungeonMaxMythicLevelInput(settings.atlasDungeonMaxMythicLevel)
+		local availableMaxLevel = getAtlasDungeonMaxMythicLevel()
 		if not panel.dungeonMaxMythicEdit:HasFocus() then
 			panel.dungeonMaxMythicEdit:SetText(tostring(dungeonMaxLevel))
 		end
 		if panel.dungeonMaxMythicHint then
-			panel.dungeonMaxMythicHint:SetText("0 = Mythic, max " .. tostring(availableMaxLevel))
+			panel.dungeonMaxMythicHint:SetText("0 = Mythic, AtlasLoot max " .. tostring(availableMaxLevel))
 		end
 	end
 	if panel.raidMaxDifficultyDrop then
@@ -840,6 +856,11 @@ SourcesPanel:SetScript("OnShow", function(self)
 		self.dungeonMaxMythicEdit:SetScript("OnEnterPressed", function(box)
 			box:ClearFocus()
 		end)
+		self.dungeonMaxMythicEdit:SetScript("OnTextChanged", function(box)
+			if box:IsVisible() and box:HasFocus() then
+				saveDungeonMaxMythicLevelDraft(self, box:GetText())
+			end
+		end)
 		self.dungeonMaxMythicEdit:SetScript("OnEditFocusLost", function()
 			commitDungeonMaxMythicLevel(self)
 		end)
@@ -928,6 +949,10 @@ SourcesPanel:SetScript("OnShow", function(self)
 
 	refreshSourcesPanel(self)
 end)
+
+SourcesPanel.okay = function(self)
+	commitDungeonMaxMythicLevel(self, true, false)
+end
 
 SourcesPanel:SetScript("OnHide", function(self)
 	commitDungeonMaxMythicLevel(self, true, false)

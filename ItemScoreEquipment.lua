@@ -1,6 +1,9 @@
 local addonName, addon = ...
 
+-- Computes and caches equipped-item scores per profile for upgrade delta comparisons.
+
 local DEFAULT_PROFILE_KEY = "DPS"
+local INVALID_DELTA = -999999
 
 --
 -- Cached equipment scores per profile.
@@ -14,10 +17,14 @@ local equipCache = {}
 -- Helpers
 ------------------------------------------------------------
 local SLOTNAME_TO_ID = setmetatable({}, {
-	__index = function(table, key) return select(1, GetInventorySlotInfo(key)) end
+	__index = function(cache, key)
+		local slotID = select(1, GetInventorySlotInfo(key))
+		cache[key] = slotID
+		return slotID
+	end
 })
 
-local function wipe() equipCache = {} end
+local function invalidateEquipCache() equipCache = {} end
 
 ------------------------------------------------------------
 -- Slot mapping (non-weapon)
@@ -39,9 +46,13 @@ local INVTYPE_TO_SLOTS = {
 	INVTYPE_SHIELD = {"SecondaryHandSlot"},
 	INVTYPE_HOLDABLE = {"SecondaryHandSlot"},
 	INVTYPE_WEAPON = {"MainHandSlot", "SecondaryHandSlot"},
+	INVTYPE_WEAPONMAINHAND = {"MainHandSlot"},
+	INVTYPE_WEAPONOFFHAND = {"SecondaryHandSlot"},
 	INVTYPE_2HWEAPON = {"MainHandSlot"},
 	INVTYPE_RANGED = {"RangedSlot"},
-	INVTYPE_RANGEDRIGHT = {"RangedSlot"}
+	INVTYPE_RANGEDRIGHT = {"RangedSlot"},
+	INVTYPE_THROWN = {"RangedSlot"},
+	INVTYPE_RELIC = {"RangedSlot"}
 }
 
 ------------------------------------------------------------
@@ -80,16 +91,18 @@ function addon.GetEquipScores(profileName) return getProfileRecord(profileName) 
 
 function addon.IsUpgrade(itemLink, profileName) return addon.CompareDelta(itemLink, profileName) > 0 end
 
+function addon.InvalidateEquipScores() invalidateEquipCache() end
+
 function addon.CompareDelta(itemLink, profileName)
-	local invType = inventoryType(itemLink)
-	if (not invType) then return -999999 end
+	local invType = addon.GetInventoryType(itemLink)
+	if (not invType) then return INVALID_DELTA end
 	local slotNames = INVTYPE_TO_SLOTS[invType]
-	if (not slotNames) then return -999999 end
+	if (not slotNames) then return INVALID_DELTA end
 
 	if (not profileName) then
 		local profiles = addon.GetProfiles()
 		local best = 0
-		for _, profile in pairs(profiles) do
+		for _, profile in ipairs(profiles) do
 			local delta = addon.CompareDelta(itemLink, profile)
 			if (delta > best) then best = delta end
 		end
@@ -98,14 +111,14 @@ function addon.CompareDelta(itemLink, profileName)
 		local cand = addon.CalculateScore(itemLink, profileName)
 		local rec = getProfileRecord(profileName)
 		assert(rec, "profile for " .. profileName .. " not found")
-		assert(#rec == 19, "profile for " .. profileName .. " has invalid content, expected 19 entries but got " .. #rec .. ": " .. tableToString(rec))
+		assert(#rec == 19, "profile for " .. profileName .. " has invalid content, expected 19 entries but got " .. #rec .. ": " .. addon.TableToString(rec))
 		assert(slotNames, "slotNames for " .. invType .. " not found")
 		local worst = 99999999
 		for _, slotName in ipairs(slotNames) do
 			local slotId = SLOTNAME_TO_ID[slotName]
 			assert(slotId > 0 and slotId <= 19, "slotId for " .. slotName .. " of profile " .. profileName .. " out of range: " .. slotId)
 			local scoreInSlot = rec[slotId]
-			assert(scoreInSlot ~= nil, "scoreInSlot for " .. slotName .. " (ID: " .. slotId .. ") of profile " .. profileName .. " not found. Scores: " .. tableToString(rec))
+			assert(scoreInSlot ~= nil, "scoreInSlot for " .. slotName .. " (ID: " .. slotId .. ") of profile " .. profileName .. " not found. Scores: " .. addon.TableToString(rec))
 			if not (invType == "INVTYPE_WEAPON" and slotName == "SecondaryHandSlot" and scoreInSlot == 0 and rec[SLOTNAME_TO_ID["MainHandSlot"]] > 0) then if scoreInSlot < worst then worst = scoreInSlot end end
 		end
 		return cand - worst
@@ -118,4 +131,4 @@ end
 local evFrame = CreateFrame("Frame")
 evFrame:RegisterEvent("PLAYER_EQUIPMENT_CHANGED")
 evFrame:RegisterEvent("UNIT_INVENTORY_CHANGED")
-evFrame:SetScript("OnEvent", function() wipe(equipCache) end)
+evFrame:SetScript("OnEvent", function() addon.InvalidateEquipScores() end)

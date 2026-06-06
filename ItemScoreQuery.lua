@@ -1,7 +1,9 @@
 local addonName, addon = ...
 
+-- Bounded asynchronous item-info warmer used by search when custom item IDs resolve slowly.
+
 local Query = {}
-_G.ItemScoreQuery = Query
+addon.Query = Query
 
 --------------------------------------------------
 -- internal state
