@@ -11,6 +11,7 @@
 - Bump `## Version:` in `ItemScore.toc` whenever addon code changes are made for release.
 - Treat AtlasLoot dungeon/raid difficulty limits as cache-time filters because they change collected item IDs.
 - Store the user's requested Mythic+ cap without an upper input clamp; provider metadata or missing difficulty IDs define the effective collected maximum.
+- Keep loot-source settings that reflect current character needs in per-character `ItemScoreData.searchSources`.
 - Never return or search a catalog built for a different loot-source settings fingerprint.
 - Invalidate equipped-score caches whenever profile scoring weights or profile identities change.
 - Detect AtlasLoot data layout at runtime; prefer the 8.x beta menu/item adapter and keep legacy `AtlasLoot_Data` as fallback.
@@ -28,7 +29,7 @@
 	- Search UI over cached runtime data from optional providers (`LootCollector`, `AtlasLoot`).
 	- Loot drop watch panel showing recently dropped upgrades.
 - Saved variables:
-	- Per-character: `ItemScoreData` (profiles, stat weights, profile UI state).
+	- Per-character: `ItemScoreData` (profiles, stat weights, profile UI state, loot-source settings).
 	- Global: `ItemDropWatchDB` (drop watch list and UI capacity), `ItemScoreCacheDB` (search catalog cache).
 
 ## 3. Documentation Index

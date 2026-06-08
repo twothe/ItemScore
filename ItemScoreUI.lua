@@ -582,8 +582,24 @@ end
 
 local function commitDungeonMaxMythicLevel(panel, skipPanelRefresh, skipRefreshQueue)
 	if not panel or not panel.dungeonMaxMythicEdit then return end
-	local value = normalizeDungeonMaxMythicLevelInput(panel.dungeonMaxMythicEdit:GetText())
+	if not panel.dungeonMaxMythicValueLoaded and not panel.dungeonMaxMythicDirty and not panel.dungeonMaxMythicEdit:HasFocus() then
+		return
+	end
+	local value = normalizeDungeonMaxMythicLevelInput(panel.dungeonMaxMythicEdit:GetText(), true)
+	if value == nil then
+		local settings = getSourceSettings()
+		value = normalizeDungeonMaxMythicLevelInput(settings.atlasDungeonMaxMythicLevel)
+		panel.dungeonMaxMythicEdit:SetText(tostring(value))
+		panel.dungeonMaxMythicValueLoaded = true
+		panel.dungeonMaxMythicDirty = false
+		if not skipPanelRefresh then
+			refreshSourcesPanel(panel)
+		end
+		return
+	end
 	panel.dungeonMaxMythicEdit:SetText(tostring(value))
+	panel.dungeonMaxMythicValueLoaded = true
+	panel.dungeonMaxMythicDirty = false
 	setSourceOption("atlasDungeonMaxMythicLevel", value, skipRefreshQueue)
 	if not skipPanelRefresh then
 		refreshSourcesPanel(panel)
@@ -591,8 +607,11 @@ local function commitDungeonMaxMythicLevel(panel, skipPanelRefresh, skipRefreshQ
 end
 
 local function saveDungeonMaxMythicLevelDraft(panel, text)
+	if not panel then return end
+	panel.dungeonMaxMythicDirty = true
 	local value = normalizeDungeonMaxMythicLevelInput(text, true)
 	if value ~= nil then
+		panel.dungeonMaxMythicValueLoaded = true
 		setSourceOption("atlasDungeonMaxMythicLevel", value, false)
 	end
 end
@@ -706,6 +725,8 @@ refreshSourcesPanel = function(panel)
 		local availableMaxLevel = getAtlasDungeonMaxMythicLevel()
 		if not panel.dungeonMaxMythicEdit:HasFocus() then
 			panel.dungeonMaxMythicEdit:SetText(tostring(dungeonMaxLevel))
+			panel.dungeonMaxMythicValueLoaded = true
+			panel.dungeonMaxMythicDirty = false
 		end
 		if panel.dungeonMaxMythicHint then
 			panel.dungeonMaxMythicHint:SetText("0 = Mythic, AtlasLoot max " .. tostring(availableMaxLevel))

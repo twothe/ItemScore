@@ -24,6 +24,8 @@
 - AtlasLoot dungeons are always included for enabled expansions and cannot be disabled independently.
 - AtlasLoot dungeon difficulty limit: default `Dungeon Max Mythic Level = 0` includes Heroic and base Mythic variants; raising the value includes Mythic+ item IDs up to the AtlasLoot-supported maximum.
 - AtlasLoot dungeon difficulty input must preserve user values above the currently supported maximum; effective results are naturally capped by AtlasLoot difficulty metadata or missing difficulty IDs.
+- AtlasLoot dungeon difficulty input persists per character across reload/restart; setting one character to `15` must not force another character to use `15`.
+- Regression: closing `Interface -> AddOns -> ItemScore -> Loot Sources` with a blank or not-yet-loaded `Dungeon Max Mythic Level` field must not overwrite an existing per-character value with `0`.
 - AtlasLoot raid difficulty limit: `Normal`, `Heroic`, `Mythic`, and `Ascended` include only variants at or below the selected maximum.
 - AtlasLoot search row display must show item grade next to the item link when known, e.g. `[Wildfire Cape] (M+10)`, `[Item] (Asc)`.
 - AtlasLoot search row display must prefer tooltip-derived item grade over provider metadata once the item tooltip is available, e.g. a cache-misindexed M+40 item must not stay labeled `M+3`.
