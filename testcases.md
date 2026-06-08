@@ -26,6 +26,7 @@
 - AtlasLoot dungeon difficulty input must preserve user values above the currently supported maximum; effective results are naturally capped by AtlasLoot difficulty metadata or missing difficulty IDs.
 - AtlasLoot raid difficulty limit: `Normal`, `Heroic`, `Mythic`, and `Ascended` include only variants at or below the selected maximum.
 - AtlasLoot search row display must show item grade next to the item link when known, e.g. `[Wildfire Cape] (M+10)`, `[Item] (Asc)`.
+- AtlasLoot search row display must prefer tooltip-derived item grade over provider metadata once the item tooltip is available, e.g. a cache-misindexed M+40 item must not stay labeled `M+3`.
 - AtlasLoot raids are individually toggleable in `Interface -> AddOns -> ItemScore -> Loot Sources`, grouped by expansion.
 - Search max-level filter (from search window): with `Max Required Level = 38`, results must exclude items requiring level 39+.
 - Search max-level filter updates must not trigger a full cache rebuild; only search results should change.

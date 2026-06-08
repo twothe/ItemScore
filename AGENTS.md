@@ -17,6 +17,7 @@
 - Keep LootCollector Worldforged tier filtering inclusive from Zul'Gurub upward, and treat no selected Worldforged tier as an unfiltered base Worldforged discovery view.
 - Keep search usable when custom item IDs never resolve through `GetItemInfo`; unresolved IDs must be bounded by retry/timeout behavior.
 - Keep item-info fetching adaptive per frame so the addon maximizes throughput without unbounded frame spikes.
+- Prefer item-tooltip difficulty labels over provider-derived AtlasLoot labels once tooltip data is available.
 
 ## 2. Project Overview
 - `ItemScore` is a Lua WoW addon for a private WotLK 3.3.5a server.

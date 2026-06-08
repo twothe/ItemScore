@@ -221,8 +221,98 @@ local armorAllowed = {
 local classCheckTip = CreateFrame("GameTooltip", "IS_ClassCheckTip", nil, "GameTooltipTemplate")
 classCheckTip:SetOwner(UIParent, "ANCHOR_NONE")
 
+local difficultyTip = CreateFrame("GameTooltip", "IS_DifficultyTip", nil, "GameTooltipTemplate")
+difficultyTip:SetOwner(UIParent, "ANCHOR_NONE")
+
 local function escapeLuaPattern(text)
 	return (tostring(text or ""):gsub("([%(%)%.%%%+%-%*%?%[%]%^%$])", "%%%1"))
+end
+
+local function cleanTooltipText(text)
+	text = tostring(text or "")
+	text = string.gsub(text, "|c%x%x%x%x%x%x%x%x", "")
+	text = string.gsub(text, "|r", "")
+	text = string.gsub(text, "^%s+", "")
+	text = string.gsub(text, "%s+$", "")
+	text = string.gsub(text, "%s+", " ")
+	if text == "" then return nil end
+	return text
+end
+
+local function tooltipLineText(tooltip, lineIndex)
+	local tooltipName = tooltip and tooltip.GetName and tooltip:GetName()
+	if not tooltipName then return nil end
+	local line = _G[tooltipName .. "TextLeft" .. tostring(lineIndex)]
+	if not line or type(line.GetText) ~= "function" then return nil end
+	return cleanTooltipText(line:GetText())
+end
+
+local function parseMythicPlusLevel(text)
+	local patterns = {
+		"[Mm]ythic%s*%+%s*(%d+)",
+		"[Mm]ythic%s+[Ll]evel%s+(%d+)",
+		"[Mm]ythic%s+(%d+)",
+		"[Mm]%s*%+%s*(%d+)",
+	}
+	for _, pattern in ipairs(patterns) do
+		local level = tonumber(string.match(text, pattern))
+		if level and level > 0 then
+			return math.floor(level)
+		end
+	end
+	return nil
+end
+
+local function parseDifficultyText(text)
+	text = cleanTooltipText(text)
+	if not text then return nil end
+
+	local mythicPlusLevel = parseMythicPlusLevel(text)
+	if mythicPlusLevel then
+		return {
+			difficultyLabel = "M+" .. tostring(mythicPlusLevel),
+			difficultyRank = 5 + mythicPlusLevel,
+		}
+	end
+
+	local normalized = string.lower(text)
+	normalized = string.gsub(normalized, "^difficulty:%s*", "")
+	normalized = string.gsub(normalized, "^mode:%s*", "")
+	normalized = string.gsub(normalized, "%s+mode$", "")
+	normalized = strtrim(normalized)
+
+	if normalized == "ascended" then
+		return { difficultyLabel = "Asc", difficultyRank = 6 }
+	end
+	if normalized == "mythic" then
+		return { difficultyLabel = "M", difficultyRank = 5 }
+	end
+	if normalized == "heroic" then
+		return { difficultyLabel = "HC", difficultyRank = 4 }
+	end
+	if normalized == "normal" then
+		return { difficultyLabel = "N", difficultyRank = 3 }
+	end
+	return nil
+end
+
+-- Returns authoritative item difficulty metadata from rendered tooltip text when present.
+function addon.GetTooltipDifficultyInfo(tooltip)
+	if not tooltip or type(tooltip.NumLines) ~= "function" then return nil end
+	for lineIndex = 2, tooltip:NumLines() do
+		local info = parseDifficultyText(tooltipLineText(tooltip, lineIndex))
+		if info then return info end
+	end
+	return nil
+end
+
+-- Renders a hidden tooltip for an item link and extracts the displayed item difficulty.
+function addon.GetItemTooltipDifficultyInfo(itemLink)
+	if not itemLink then return nil end
+	difficultyTip:ClearLines()
+	local ok = pcall(difficultyTip.SetHyperlink, difficultyTip, itemLink)
+	if not ok then return nil end
+	return addon.GetTooltipDifficultyInfo(difficultyTip)
 end
 
 local function classListContains(classListText, localizedClassName)

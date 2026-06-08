@@ -85,6 +85,41 @@ local function difficultySuffix(label)
 	return " |cffcfcfcf(" .. label .. ")|r"
 end
 
+local function isAtlasDifficultyLabel(label)
+	label = trim(label)
+	if not label then return false end
+	return label == "N" or label == "HC" or label == "M" or label == "Asc" or string.match(label, "^M%+%d+$") ~= nil
+end
+
+local function shouldUseTooltipDifficulty(metadata, tooltipInfo)
+	if type(tooltipInfo) ~= "table" or not tooltipInfo.difficultyLabel then return false end
+	if not metadata or not isAtlasDifficultyLabel(metadata.difficultyLabel) then return false end
+	return true
+end
+
+local function resolveDisplayMetadata(itemLink, metadata)
+	if type(addon.GetItemTooltipDifficultyInfo) ~= "function" then return metadata, nil end
+	if not metadata or not isAtlasDifficultyLabel(metadata.difficultyLabel) then return metadata, nil end
+	local tooltipInfo = addon.GetItemTooltipDifficultyInfo(itemLink)
+	if not shouldUseTooltipDifficulty(metadata, tooltipInfo) then
+		return metadata, nil
+	end
+	return tooltipInfo, tooltipInfo.difficultyLabel
+end
+
+local function replaceSourceDifficultyLabels(sources, difficultyLabel)
+	if not difficultyLabel or type(sources) ~= "table" then return sources end
+	local adjusted = {}
+	for index, sourceData in ipairs(sources) do
+		adjusted[index] = {
+			place = sourceData.place,
+			source = sourceData.source,
+			difficultyLabel = difficultyLabel,
+		}
+	end
+	return adjusted
+end
+
 local function belongsToSlot(invType, wanted)
 	if not invType or not wanted then return false end
 	for _, value in ipairs(wanted) do
@@ -121,8 +156,9 @@ local function insertTop(list, itemData, maxItems)
 	end
 end
 
-local function makeRowData(itemID, raw, link, rarity, name, icon, score, sources, metadata)
-	local placeText, sourceText = sourcePreview(sources)
+local function makeRowData(itemID, raw, link, rarity, name, icon, score, sources, metadata, sourceDifficultyOverride)
+	local displaySources = replaceSourceDifficultyLabels(sources, sourceDifficultyOverride)
+	local placeText, sourceText = sourcePreview(displaySources)
 	return {
 		score = score,
 		link = link or raw,
@@ -132,7 +168,7 @@ local function makeRowData(itemID, raw, link, rarity, name, icon, score, sources
 		icon = icon,
 		dungeon = placeText,
 		sourceText = sourceText,
-		sources = sources,
+		sources = displaySources,
 		difficultyLabel = metadata and metadata.difficultyLabel or nil,
 	}
 end
@@ -237,6 +273,16 @@ for rowIndex = 1, MAX_ROWS do
 		if not self.link then return end
 		GameTooltip:SetOwner(self, "ANCHOR_CURSOR")
 		GameTooltip:SetHyperlink(self.link)
+		if type(addon.GetTooltipDifficultyInfo) == "function" and isAtlasDifficultyLabel(self.difficultyLabel) then
+			local tooltipInfo = addon.GetTooltipDifficultyInfo(GameTooltip)
+			if shouldUseTooltipDifficulty({ difficultyLabel = self.difficultyLabel }, tooltipInfo) then
+				self.difficultyLabel = tooltipInfo.difficultyLabel
+				self.sources = replaceSourceDifficultyLabels(self.sources, self.difficultyLabel)
+				if self.baseItemText then
+					self.itemLink:SetText(self.baseItemText .. difficultySuffix(self.difficultyLabel))
+				end
+			end
+		end
 		if type(self.sources) == "table" and #self.sources > 1 then
 			GameTooltip:AddLine(" ")
 			GameTooltip:AddLine("Known Sources", 0.9, 0.9, 0.9)
@@ -448,6 +494,8 @@ local function refreshRows(data)
 				row.bossText:SetText("")
 				row.link = nil
 				row.sources = nil
+				row.baseItemText = nil
+				row.difficultyLabel = nil
 			else
 				local delta = addon.CompareDelta(rowData.link, selectedProfile)
 				local deltaInvalid = type(delta) ~= "number" or delta ~= delta or math.abs(delta) >= 999999
@@ -460,11 +508,14 @@ local function refreshRows(data)
 				end
 				local _, _, rarity = GetItemInfo(rowData.link)
 				local color = select(4, GetItemQualityColor(rarity or 1))
-				row.itemLink:SetText(color .. (select(2, GetItemInfo(rowData.raw)) or ("[" .. rowData.name .. "]")) .. "|r" .. difficultySuffix(rowData.difficultyLabel))
+				local itemText = color .. (select(2, GetItemInfo(rowData.raw)) or ("[" .. rowData.name .. "]")) .. "|r"
+				row.itemLink:SetText(itemText .. difficultySuffix(rowData.difficultyLabel))
 				row.dungeonText:SetText(rowData.dungeon or "")
 				row.bossText:SetText(rowData.sourceText or "")
 				row.link = rowData.link
 				row.sources = rowData.sources
+				row.baseItemText = itemText
+				row.difficultyLabel = rowData.difficultyLabel
 			end
 			row:Show()
 		else
@@ -474,6 +525,8 @@ local function refreshRows(data)
 			row.bossText:SetText("")
 			row.link = nil
 			row.sources = nil
+			row.baseItemText = nil
+			row.difficultyLabel = nil
 			row:Hide()
 		end
 	end
@@ -626,7 +679,8 @@ local function processSearchTask(state, maxOps)
 					local score = addon.CalculateScore(itemLink, state.profileName)
 					if score and score >= 5 then
 						local sources = state.itemSources[itemID] or {}
-						local rowData = makeRowData(itemID, raw, itemLink, rarity, name, icon, score, sources, state.itemMeta[itemID])
+						local metadata, sourceDifficultyOverride = resolveDisplayMetadata(itemLink, state.itemMeta[itemID])
+						local rowData = makeRowData(itemID, raw, itemLink, rarity, name, icon, score, sources, metadata, sourceDifficultyOverride)
 
 						if state.isUpgradeSearch then
 							if addon.IsUpgrade(itemLink, state.profileName) then

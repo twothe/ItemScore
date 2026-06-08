@@ -68,6 +68,7 @@ Notes:
 - `byPlace` preserves current conceptual shape.
 - `itemSources` prevents lossy mapping and handles multi-source duplicates.
 - `itemMeta` stores compact display metadata such as AtlasLoot difficulty labels (`N`, `HC`, `M`, `M+10`, `Asc`).
+- Provider difficulty metadata is provisional display data; once an item tooltip is available, search display should prefer the tooltip-derived item grade to correct stale or misindexed provider records.
 
 ### 2. Provider implementations
 Add provider modules:
