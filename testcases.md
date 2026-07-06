@@ -15,6 +15,8 @@
 - ItemScore only (no LootCollector, no AtlasLoot): search opens and shows deterministic "no data source available" state without Lua errors.
 - LootCollector only: vendor and discovery-derived items are searchable by zone/source.
 - LootCollector Worldforged aggregation: records appear as `Zone -> Worldforged -> itemIDs`.
+- LootCollector split install: ItemScore uses the main `LootCollector` accessor adapter when available and does not directly parse `LootCollector_StarterDB` or `LootCollector_CustomImport`.
+- LootCollector V8 fallback: if accessors are unavailable but `LootCollectorDB_Asc.global.realms[realmKey]` is loaded, ItemScore reads the current realm bucket read-only.
 - AtlasLoot only: dungeon/raid loot entries are searchable by instance and boss/source.
 - AtlasLoot adapter detection: Ascension 8.x beta data (`AtlasLoot.ui.menus.data` + `AtlasLoot.data.item`) must use the `atlasloot_v8` adapter even when global `AtlasLoot_Data` contains only compatibility data.
 - AtlasLoot adapter fallback: legacy `AtlasLoot_Data` tables must still be collected when beta menu/item data is absent.

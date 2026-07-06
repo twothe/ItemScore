@@ -1,6 +1,7 @@
 local addonName, addon = ...
 
-local CACHE_SCHEMA_VERSION = 4
+-- Search source manager: owns provider registration, cache fingerprints, background rebuilds, and provider status.
+local CACHE_SCHEMA_VERSION = 5
 local CACHE_REFRESH_INTERVAL_SECONDS = 24 * 60 * 60
 local MAX_DUNGEON_MYTHIC_LEVEL_FALLBACK = 40
 local RAID_DIFFICULTY_NORMAL = 3
@@ -860,10 +861,25 @@ function addon.GetSearchCacheStatus()
 		end
 		if available then availableProviderCount = availableProviderCount + 1 end
 
+		local adapterInfo = nil
+		if provider and type(provider.GetAdapterInfo) == "function" then
+			local ok, info = pcall(provider.GetAdapterInfo, settings)
+			if ok and type(info) == "table" then
+				adapterInfo = info
+			end
+		end
+
 		providerMeta[providerKey] = {
 			enabled = enabled,
 			available = available,
 			last = cache.providerStats[providerKey],
+			adapter = adapterInfo and adapterInfo.adapter or nil,
+			adapterLabel = adapterInfo and adapterInfo.label or nil,
+			reason = adapterInfo and adapterInfo.reason or nil,
+			mainInstalled = adapterInfo and adapterInfo.mainInstalled or nil,
+			mainLoaded = adapterInfo and adapterInfo.mainLoaded or nil,
+			starterDBInstalled = adapterInfo and adapterInfo.starterDBInstalled or nil,
+			customImportInstalled = adapterInfo and adapterInfo.customImportInstalled or nil,
 		}
 	end
 
@@ -902,6 +918,8 @@ end
 
 local refreshEvents = {
 	["LootCollector"] = true,
+	["LootCollector_StarterDB"] = true,
+	["LootCollector_CustomImport"] = true,
 	["AtlasLoot"] = true,
 	["AtlasLoot_OriginalWoW"] = true,
 	["AtlasLoot_BurningCrusade"] = true,

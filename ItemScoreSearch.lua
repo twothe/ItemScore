@@ -1,5 +1,6 @@
 local addonName, addon = ...
 
+-- Search UI and slash-command surface for scoring cached provider items against configured profiles.
 local LIST_UPGRADES_MAX = 6
 local LIST_SLOT_MAX = 20
 
@@ -923,6 +924,18 @@ SlashCmdList["ISSEARCH"] = function(msg)
 		local status = getStatusSafe()
 		print(string.format("ItemScore: cache items=%d, stale=%s, updating=%s", status.itemCount, tostring(status.stale), tostring(status.updating)))
 		print(string.format("ItemScore: providers enabled=%d, available=%d", status.enabledProviderCount, status.availableProviderCount))
+		for providerKey, providerStatus in pairs(status.providers or {}) do
+			local adapterText = providerStatus.adapterLabel or providerStatus.adapter or "n/a"
+			local detailText = providerStatus.reason and (" - " .. providerStatus.reason) or ""
+			print(string.format(
+				"ItemScore: %s enabled=%s, available=%s, adapter=%s%s",
+				tostring(providerKey),
+				tostring(providerStatus.enabled),
+				tostring(providerStatus.available),
+				tostring(adapterText),
+				detailText
+			))
+		end
 		if status.currentProvider then
 			print("ItemScore: currently processing provider: " .. tostring(status.currentProvider))
 		end

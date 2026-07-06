@@ -16,7 +16,12 @@ Target source shape remains:
 - Public accessors:
 	- `LootCollector:GetDiscoveriesDB()`
 	- `LootCollector:GetVendorsDB()`
+- Current LootCollector releases are split into:
+	- `LootCollector`: the main addon and only authoritative database owner.
+	- `LootCollector_StarterDB`: optional load-on-demand import payload.
+	- `LootCollector_CustomImport`: optional load-on-demand custom import buffer.
 - Data model:
+	- Active V8 records are realm-bucketed under `LootCollectorDB_Asc.global.realms[realmKey].discoveries` and `.blackmarketVendors`.
 	- Discoveries are keyed records with at least `i` (itemID), `c/z/iz` (zone ids), `xy`, `dt`, `src`.
 	- Vendor records include `vendorName`, `vendorType`, `vendorItems[]` where entries contain `itemID`.
 - Zone name resolution is available via:
@@ -94,7 +99,11 @@ Merge rules:
 ## Source-specific extraction plan
 
 ### LootCollector extraction
-Use `LootCollector:GetVendorsDB()` and `LootCollector:GetDiscoveriesDB()`.
+Adapter decision order:
+1. Use the loaded or loadable main `LootCollector` addon through `LootCollector:GetDiscoveriesDB()` and `LootCollector:GetVendorsDB()`.
+2. If the object is present but the accessor path is not ready, read the current realm bucket from `LootCollectorDB_Asc.global.realms[realmKey]` as a read-only fallback.
+3. If only legacy pre-bucket `global.discoveries` / `global.blackmarketVendors` tables exist, read them as a compatibility fallback.
+4. Do not read `LootCollector_StarterDB` or `LootCollector_CustomImport` directly; those are import sources and must be applied by LootCollector so its migration, deduplication, and network-compatible record handling stay authoritative.
 
 Mapping:
 - Vendors:
@@ -156,7 +165,7 @@ Rules:
 
 Refresh triggers:
 - `PLAYER_LOGIN`
-- `ADDON_LOADED` for `LootCollector`, `AtlasLoot`, and AtlasLoot expansion modules
+- `ADDON_LOADED` for `LootCollector`, `LootCollector_StarterDB`, `LootCollector_CustomImport`, `AtlasLoot`, and AtlasLoot expansion modules
 - Manual `/is refresh`.
 
 ## AtlasLoot Controls
