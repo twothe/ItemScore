@@ -43,14 +43,18 @@ local ARMOR_TYPE_DEFS = {
 	{ key = "plate", labelGlobal = "ITEM_SUBCLASS_ARMOR_PLATE", fallback = "Plate" },
 }
 
+local function toLookupKey(value)
+	local text = strtrim(tostring(value or ""))
+	if text == "" then return nil end
+	return string.lower(text)
+end
+
 local ARMOR_TYPE_LOOKUP = {}
 for _, def in ipairs(ARMOR_TYPE_DEFS) do
 	ARMOR_TYPE_LOOKUP[def.key] = def.key
-	ARMOR_TYPE_LOOKUP[string.lower(def.fallback)] = def.key
-	local localized = _G[def.labelGlobal]
-	if type(localized) == "string" and localized ~= "" then
-		ARMOR_TYPE_LOOKUP[string.lower(localized)] = def.key
-	end
+	ARMOR_TYPE_LOOKUP[toLookupKey(def.fallback)] = def.key
+	local localizedKey = toLookupKey(_G[def.labelGlobal])
+	if localizedKey then ARMOR_TYPE_LOOKUP[localizedKey] = def.key end
 end
 
 function addon.GetArmorTypeOptions()
@@ -66,10 +70,7 @@ function addon.GetArmorTypeOptions()
 end
 
 function addon.NormalizeArmorType(itemType, subType)
-	if itemType ~= "Armor" then return nil end
-	local normalized = string.lower(strtrim(tostring(subType or "")))
-	if normalized == "" then return nil end
-	return ARMOR_TYPE_LOOKUP[normalized]
+	return ARMOR_TYPE_LOOKUP[toLookupKey(subType)]
 end
 
 local WEAPON_TYPE_DEFS = {
@@ -91,12 +92,6 @@ local WEAPON_TYPE_DEFS = {
 	{ key = "thrown", labelGlobal = "ITEM_SUBCLASS_WEAPON_THROWN", fallback = "Thrown" },
 	{ key = "wand", labelGlobal = "ITEM_SUBCLASS_WEAPON_WAND", fallback = "Wands" },
 }
-
-local function toLookupKey(value)
-	local text = strtrim(tostring(value or ""))
-	if text == "" then return nil end
-	return string.lower(text)
-end
 
 local WEAPON_SUBTYPE_LOOKUP = {}
 local WEAPON_INVTYPE_LOOKUP = {}
@@ -131,7 +126,9 @@ function addon.IsWeaponTypeFilterRelevant(itemType, invType)
 	if invType == "INVTYPE_SHIELD" or invType == "INVTYPE_HOLDABLE" then
 		return true
 	end
-	return itemType == "Weapon"
+	local itemTypeKey = toLookupKey(itemType)
+	local weaponClassKey = toLookupKey(_G.ITEM_CLASS_WEAPON or "Weapon")
+	return itemTypeKey == "weapon" or (weaponClassKey and itemTypeKey == weaponClassKey)
 end
 
 function addon.NormalizeWeaponType(itemType, subType, invType)
@@ -139,7 +136,6 @@ function addon.NormalizeWeaponType(itemType, subType, invType)
 	if keyByInvType then
 		return keyByInvType
 	end
-	if itemType ~= "Weapon" then return nil end
 	local normalizedSubType = toLookupKey(subType)
 	if not normalizedSubType then return nil end
 	return WEAPON_SUBTYPE_LOOKUP[normalizedSubType]
@@ -169,52 +165,52 @@ end
 
 local armorAllowed = {
 	WARRIOR = {
-		Cloth = true,
-		Leather = true,
-		Mail = true,
-		Plate = true,
-		Shields = true
+		cloth = true,
+		leather = true,
+		mail = true,
+		plate = true,
+		shield = true
 	},
 	PALADIN = {
-		Cloth = true,
-		Leather = true,
-		Mail = true,
-		Plate = true,
-		Shields = true
+		cloth = true,
+		leather = true,
+		mail = true,
+		plate = true,
+		shield = true
 	},
 	DEATHKNIGHT = {
-		Cloth = true,
-		Leather = true,
-		Mail = true,
-		Plate = true
+		cloth = true,
+		leather = true,
+		mail = true,
+		plate = true
 	},
 	HUNTER = {
-		Cloth = true,
-		Leather = true,
-		Mail = true
+		cloth = true,
+		leather = true,
+		mail = true
 	},
 	SHAMAN = {
-		Cloth = true,
-		Leather = true,
-		Mail = true,
-		Shields = true
+		cloth = true,
+		leather = true,
+		mail = true,
+		shield = true
 	},
 	ROGUE = {
-		Cloth = true,
-		Leather = true
+		cloth = true,
+		leather = true
 	},
 	DRUID = {
-		Cloth = true,
-		Leather = true
+		cloth = true,
+		leather = true
 	},
 	PRIEST = {
-		Cloth = true
+		cloth = true
 	},
 	MAGE = {
-		Cloth = true
+		cloth = true
 	},
 	WARLOCK = {
-		Cloth = true
+		cloth = true
 	}
 }
 
@@ -329,6 +325,11 @@ local function classListContains(classListText, localizedClassName)
 	return false
 end
 
+local function normalizedEquipArmorKey(itemType, subType, equipLoc)
+	if equipLoc == "INVTYPE_SHIELD" then return "shield" end
+	return addon.NormalizeArmorType(itemType, subType)
+end
+
 function addon.CanPlayerEquip(itemLink)
 	local name, _, _, _, reqLevel, itemType, subType, _, equipLoc = GetItemInfo(itemLink)
 	if not name or equipLoc == "" then return false end
@@ -345,10 +346,12 @@ function addon.CanPlayerEquip(itemLink)
 		if list and not classListContains(list, pLoc) then return false end
 	end
 
-	if itemType == "Armor" then
+	local armorKey = normalizedEquipArmorKey(itemType, subType, equipLoc)
+	if armorKey or equipLoc == "INVTYPE_SHIELD" then
 		if equipLoc == "INVTYPE_CLOAK" or equipLoc == "INVTYPE_NECK" or equipLoc == "INVTYPE_FINGER" or equipLoc == "INVTYPE_TRINKET" then return true end
 		local allowed = armorAllowed[pKey]
-		if not allowed or not allowed[subType] then return false end
+		if not allowed then return true end
+		if armorKey and not allowed[armorKey] then return false end
 	end
 	return true
 end

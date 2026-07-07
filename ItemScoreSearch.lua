@@ -129,6 +129,67 @@ local function belongsToSlot(invType, wanted)
 	return false
 end
 
+local function itemRaw(itemID)
+	return "item:" .. tostring(itemID) .. ":::::::::"
+end
+
+local function resolveSearchItemInfo(itemID, metadata)
+	local primaryRaw = itemRaw(itemID)
+	local name, link, rarity, itemLevel, requiredLevel, itemType, subType, stackCount, invType, icon = GetItemInfo(primaryRaw)
+	if name then
+		return {
+			raw = primaryRaw,
+			name = name,
+			link = link,
+			rarity = rarity,
+			itemLevel = itemLevel,
+			requiredLevel = requiredLevel,
+			itemType = itemType,
+			subType = subType,
+			stackCount = stackCount,
+			invType = invType,
+			icon = icon,
+		}
+	end
+
+	local fallbackID = metadata and tonumber(metadata.fallbackItemID)
+	local fallbackRaw = metadata and metadata.fallbackItemLink
+	if not fallbackRaw and fallbackID and fallbackID > 0 then
+		fallbackRaw = itemRaw(fallbackID)
+	end
+
+	if fallbackRaw and fallbackRaw ~= primaryRaw then
+		name, link, rarity, itemLevel, requiredLevel, itemType, subType, stackCount, invType, icon = GetItemInfo(fallbackRaw)
+		if name then
+			return {
+				raw = fallbackRaw,
+				name = name,
+				link = link or fallbackRaw,
+				rarity = rarity,
+				itemLevel = itemLevel,
+				requiredLevel = requiredLevel,
+				itemType = itemType,
+				subType = subType,
+				stackCount = stackCount,
+				invType = invType,
+				icon = icon,
+				fallbackUsed = true,
+			}
+		end
+	end
+
+	return nil, primaryRaw, fallbackID
+end
+
+local function queueMissingItemInfo(itemID, fallbackID)
+	local queuedPrimary = Query.Add(itemID)
+	local queuedFallback = false
+	if fallbackID and fallbackID ~= itemID then
+		queuedFallback = Query.Add(fallbackID)
+	end
+	return queuedPrimary or queuedFallback
+end
+
 local function nowMillis()
 	if type(debugprofilestop) == "function" then
 		return debugprofilestop()
@@ -601,8 +662,26 @@ end
 -- Background search worker
 --------------------------------------------------
 local searchState = nil
+local lastSearchStats = nil
 local searchWorker = CreateFrame("Frame")
 local pendingQueryRefresh = false
+
+local function summarizeSearchStats(stats)
+	if type(stats) ~= "table" then return nil end
+	return string.format(
+		"checked=%d, rows=%d, itemInfo=%d, level=%d, armor=%d, weapon=%d, equip=%d, score=%d, upgrade=%d, slot=%d",
+		stats.checked or 0,
+		stats.rows or 0,
+		stats.missingItemInfo or 0,
+		stats.blockedByLevel or 0,
+		stats.blockedByArmorType or 0,
+		stats.blockedByWeaponType or 0,
+		stats.blockedByEquip or 0,
+		stats.blockedByScore or 0,
+		stats.blockedByUpgrade or 0,
+		stats.blockedBySlot or 0
+	)
+end
 
 local function resetSearchButton()
 	searchBtn:SetText("Search")
@@ -645,56 +724,75 @@ local function processSearchTask(state, maxOps)
 		local itemID = state.itemIDs[state.index]
 		state.index = state.index + 1
 		ops = ops + 1
+		state.stats.checked = state.stats.checked + 1
 
-		local raw = "item:" .. itemID .. ":::::::::"
-		local name, link, rarity, _, requiredLevel, itemType, subType, _, invType, icon = GetItemInfo(raw)
-		if not name then
-			if not Query.Add(itemID) then
+		local itemMetadata = state.itemMeta[itemID]
+		local itemInfo, raw, fallbackID = resolveSearchItemInfo(itemID, itemMetadata)
+		if not itemInfo then
+			if not queueMissingItemInfo(itemID, fallbackID) then
 				state.skippedItemInfo = true
 			end
 			state.missingItemInfo = true
+			state.stats.missingItemInfo = state.stats.missingItemInfo + 1
 		else
-			local reqLevel = tonumber(requiredLevel) or 0
+			local reqLevel = tonumber(itemInfo.requiredLevel) or 0
 			local blockedByArmorType = false
 			if state.hasArmorTypeFilter and type(addon.NormalizeArmorType) == "function" then
-				local armorTypeKey = addon.NormalizeArmorType(itemType, subType)
-				if armorTypeKey and not isArmorTypeFilterExemptSlot(invType) and not state.armorTypeFilter[armorTypeKey] then
+				local armorTypeKey = addon.NormalizeArmorType(itemInfo.itemType, itemInfo.subType)
+				if armorTypeKey and not isArmorTypeFilterExemptSlot(itemInfo.invType) and not state.armorTypeFilter[armorTypeKey] then
 					blockedByArmorType = true
+					state.stats.blockedByArmorType = state.stats.blockedByArmorType + 1
 				end
 			end
 
 			local blockedByWeaponType = false
-			if state.hasWeaponTypeFilter and type(addon.IsWeaponTypeFilterRelevant) == "function" and addon.IsWeaponTypeFilterRelevant(itemType, invType) then
+			if state.hasWeaponTypeFilter and type(addon.IsWeaponTypeFilterRelevant) == "function" and addon.IsWeaponTypeFilterRelevant(itemInfo.itemType, itemInfo.invType) then
 				local weaponTypeKey = nil
 				if type(addon.NormalizeWeaponType) == "function" then
-					weaponTypeKey = addon.NormalizeWeaponType(itemType, subType, invType)
+					weaponTypeKey = addon.NormalizeWeaponType(itemInfo.itemType, itemInfo.subType, itemInfo.invType)
 				end
 				if not weaponTypeKey or not state.weaponTypeFilter[weaponTypeKey] then
 					blockedByWeaponType = true
+					state.stats.blockedByWeaponType = state.stats.blockedByWeaponType + 1
 				end
 			end
 
-			if not blockedByArmorType and not blockedByWeaponType and not (state.maxRequiredLevel > 0 and reqLevel > state.maxRequiredLevel) then
-				local itemLink = link or raw
+			local blockedByLevel = state.maxRequiredLevel > 0 and reqLevel > state.maxRequiredLevel
+			if blockedByLevel then
+				state.stats.blockedByLevel = state.stats.blockedByLevel + 1
+			end
+
+			if not blockedByArmorType and not blockedByWeaponType and not blockedByLevel then
+				local itemLink = itemInfo.link or itemInfo.raw or raw
 				if addon.CanPlayerEquip(itemLink) then
 					local score = addon.CalculateScore(itemLink, state.profileName)
 					if score and score >= 5 then
 						local sources = state.itemSources[itemID] or {}
-						local metadata, sourceDifficultyOverride = resolveDisplayMetadata(itemLink, state.itemMeta[itemID])
-						local rowData = makeRowData(itemID, raw, itemLink, rarity, name, icon, score, sources, metadata, sourceDifficultyOverride)
+						local metadata, sourceDifficultyOverride = resolveDisplayMetadata(itemLink, itemMetadata)
+						local rowData = makeRowData(itemID, itemInfo.raw or raw, itemLink, itemInfo.rarity, itemInfo.name, itemInfo.icon, score, sources, metadata, sourceDifficultyOverride)
 
 						if state.isUpgradeSearch then
 							if addon.IsUpgrade(itemLink, state.profileName) then
 								for _, slotState in ipairs(state.upgradeSlotStates) do
-									if belongsToSlot(invType, slotState.inv) then
+									if belongsToSlot(itemInfo.invType, slotState.inv) then
 										insertTop(slotState.results, rowData, LIST_UPGRADES_MAX)
+										state.stats.rows = state.stats.rows + 1
 									end
 								end
+							else
+								state.stats.blockedByUpgrade = state.stats.blockedByUpgrade + 1
 							end
-						elseif belongsToSlot(invType, state.slotInvTypes) then
+						elseif belongsToSlot(itemInfo.invType, state.slotInvTypes) then
 							insertTop(state.results, rowData, LIST_SLOT_MAX)
+							state.stats.rows = state.stats.rows + 1
+						else
+							state.stats.blockedBySlot = state.stats.blockedBySlot + 1
 						end
+					else
+						state.stats.blockedByScore = state.stats.blockedByScore + 1
 					end
+				else
+					state.stats.blockedByEquip = state.stats.blockedByEquip + 1
 				end
 			end
 		end
@@ -717,6 +815,7 @@ local function finishSearchTask(state)
 	searchWorker:SetScript("OnUpdate", nil)
 
 	local rowsData = state.finalRows or {}
+	lastSearchStats = state.stats
 	if Query.IsBusy() then
 		if #rowsData > 0 then
 			refreshRows(rowsData)
@@ -732,8 +831,13 @@ local function finishSearchTask(state)
 
 	resetSearchButton()
 	if #rowsData == 0 then
+		local detail = summarizeSearchStats(state.stats)
+		local label = state.missingItemInfo and "No data found (some item info unavailable)." or "No data found"
+		if detail then
+			label = label .. " " .. detail
+		end
 		refreshRows({
-			{ isHeader = true, label = state.missingItemInfo and "No data found (some item info unavailable)." or "No data found" },
+			{ isHeader = true, label = label },
 		})
 	else
 		refreshRows(rowsData)
@@ -794,6 +898,18 @@ local function startSearchTask(profileName, slotLabel, catalog)
 		weaponTypeFilter = weaponTypeFilter,
 		results = {},
 		isUpgradeSearch = slotLabel == "Upgrades",
+		stats = {
+			checked = 0,
+			rows = 0,
+			missingItemInfo = 0,
+			blockedByLevel = 0,
+			blockedByArmorType = 0,
+			blockedByWeaponType = 0,
+			blockedByEquip = 0,
+			blockedByScore = 0,
+			blockedByUpgrade = 0,
+			blockedBySlot = 0,
+		},
 	}
 
 	if searchState.isUpgradeSearch then
@@ -880,6 +996,7 @@ local function printHelp()
 	print("/is                  - Toggle search window")
 	print("/is refresh          - Rebuild local search cache now")
 	print("/is status           - Show cache/provider status")
+	print("/is searchstatus     - Show last search filter counters")
 	print("/is lootcollector on|off")
 	print("/is atlas on|off")
 	print("/is atlas classic on|off")
@@ -935,12 +1052,46 @@ SlashCmdList["ISSEARCH"] = function(msg)
 				tostring(adapterText),
 				detailText
 			))
+			local last = providerStatus.last
+			if type(last) == "table" then
+				local parts = {}
+				local keys = { "items", "sources", "discoveries", "worldforgedDiscoveries", "worldforgedMappings", "vendorItems", "mappingCount", "tables", "scannedMenus", "missingItemTables" }
+				for _, key in ipairs(keys) do
+					if last[key] ~= nil then
+						parts[#parts + 1] = key .. "=" .. tostring(last[key])
+					end
+				end
+				if last.realmKey then
+					parts[#parts + 1] = "realm=" .. tostring(last.realmKey)
+				end
+				if last.adapter then
+					parts[#parts + 1] = "lastAdapter=" .. tostring(last.adapter)
+				end
+				if #parts > 0 then
+					print("ItemScore: " .. tostring(providerKey) .. " last " .. table.concat(parts, ", "))
+				end
+				if last.error then
+					print("ItemScore: " .. tostring(providerKey) .. " error: " .. tostring(last.error))
+				elseif last.reason then
+					print("ItemScore: " .. tostring(providerKey) .. " reason: " .. tostring(last.reason))
+				end
+			end
 		end
 		if status.currentProvider then
 			print("ItemScore: currently processing provider: " .. tostring(status.currentProvider))
 		end
 		if status.lastError then
 			print("ItemScore: last cache error: " .. status.lastError)
+		end
+		return
+	end
+
+	if msg == "searchstatus" or msg == "searchdiag" then
+		local detail = summarizeSearchStats(lastSearchStats)
+		if detail then
+			print("ItemScore: last search " .. detail)
+		else
+			print("ItemScore: no search has completed yet.")
 		end
 		return
 	end

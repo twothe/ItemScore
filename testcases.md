@@ -43,9 +43,13 @@
 - If no weapon type is selected in a profile filter, search must not apply any weapon-type restriction.
 - `Shield` and `Held In Off-hand` must be independently filterable (e.g. mage can disable shield, tank can disable held off-hand).
 - Upgrade delta and upgrade search must support `INVTYPE_WEAPONMAINHAND`, `INVTYPE_WEAPONOFFHAND`, `INVTYPE_THROWN`, and `INVTYPE_RELIC`.
+- Search equip checks must not reject all armor when the client returns localized armor subtypes or a private-server class token unknown to the stock WotLK class table.
 - LootCollector Worldforged tier filters (`ZG/MC/BWL/Naxxramas`) must affect which Worldforged entries are added to search catalog.
 - LootCollector Worldforged tier filters must include Zul'Gurub as the lowest configurable tier.
+- LootCollector Worldforged tier filters are inclusive from Zul'Gurub through the highest selected tier.
 - LootCollector Worldforged collection must keep base Worldforged discoveries visible when no Worldforged tier is selected.
+- LootCollector Worldforged collection must keep base Worldforged discoveries visible when selected tier IDs cannot be derived through `GetItemDifficultyID`.
+- LootCollector Worldforged search must use the original LootCollector item ID/link as a bounded fallback when a selected tier ID is not yet resolved by `GetItemInfo`.
 - Search must not show cached AtlasLoot M+ variants from an older source-settings fingerprint after the Mythic+ limit changes.
 - AtlasLoot area filter: `/is atlas place off <Area>` removes that area from search results.
 - Both addons: merged result deduplicates identical `(place, source, itemID)` triples and preserves multi-source items.

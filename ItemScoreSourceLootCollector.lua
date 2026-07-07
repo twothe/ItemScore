@@ -125,12 +125,6 @@ local function resolveZoneName(lootCollector, record)
 	local z = tonumber(record and record.z) or 0
 	local iz = tonumber(record and record.iz) or 0
 
-	if type(lootCollector) == "table" and type(lootCollector.ResolveZoneDisplay) == "function" then
-		local zoneName = lootCollector.ResolveZoneDisplay(c, z, iz)
-		zoneName = clean(zoneName)
-		if zoneName then return zoneName end
-	end
-
 	if type(lootCollector) == "table" and type(lootCollector.GetModule) == "function" then
 		local ok, zoneList = pcall(lootCollector.GetModule, lootCollector, "ZoneList", true)
 		if ok and type(zoneList) == "table" and type(zoneList.MapDataByID) == "table" then
@@ -138,6 +132,15 @@ local function resolveZoneName(lootCollector, record)
 			local zoneName = clean(zoneData and zoneData.name)
 			if zoneName then return zoneName end
 		end
+	end
+
+	if type(lootCollector) == "table" and type(lootCollector.ResolveZoneDisplay) == "function" then
+		local ok, zoneName = pcall(lootCollector.ResolveZoneDisplay, c, z, iz)
+		if not ok then
+			ok, zoneName = pcall(lootCollector.ResolveZoneDisplay, lootCollector, c, z, iz)
+		end
+		zoneName = clean(zoneName)
+		if zoneName then return zoneName end
 	end
 
 	if z > 0 then return "Zone " .. z end
@@ -270,7 +273,8 @@ local function buildWorldforgedTierIDs(itemID, cache)
 	local tierIDs = {}
 	if type(GetItemDifficultyID) == "function" then
 		for _, tierDef in ipairs(WORLDFORGED_TIERS) do
-			local tierItemID = tonumber(GetItemDifficultyID(itemID, tierDef.difficulty))
+			local rawTierItemID = GetItemDifficultyID(itemID, tierDef.difficulty)
+			local tierItemID = tonumber(rawTierItemID)
 			if tierItemID and tierItemID > 0 then
 				tierIDs[tierDef.settingKey] = tierItemID
 			end
@@ -281,45 +285,60 @@ local function buildWorldforgedTierIDs(itemID, cache)
 	return tierIDs
 end
 
-local function hasSelectedWorldforgedTier(settings)
-	for _, tierDef in ipairs(WORLDFORGED_TIERS) do
+local function itemNameFromLink(itemLink)
+	itemLink = clean(itemLink)
+	if not itemLink then return nil end
+	return clean(string.match(itemLink, "%[(.-)%]"))
+end
+
+local function discoveryFallbackMetadata(discovery, difficultyLabel, difficultyRank)
+	if type(discovery) ~= "table" then
+		if not difficultyLabel and not difficultyRank then return nil end
+		return {
+			difficultyLabel = difficultyLabel,
+			difficultyRank = difficultyRank,
+		}
+	end
+
+	local itemID = tonumber(discovery.i)
+	local itemLink = clean(discovery.il)
+	return {
+		difficultyLabel = difficultyLabel,
+		difficultyRank = difficultyRank,
+		fallbackItemID = itemID,
+		fallbackItemLink = itemLink,
+		fallbackItemName = itemNameFromLink(itemLink),
+		fallbackItemRarity = tonumber(discovery.q),
+	}
+end
+
+local function selectedWorldforgedTierLimit(settings)
+	local selectedIndex = nil
+	for index, tierDef in ipairs(WORLDFORGED_TIERS) do
 		if settings[tierDef.settingKey] then
-			return true
+			selectedIndex = index
 		end
 	end
-	return false
+	return selectedIndex
 end
 
-local function hasAllWorldforgedTiersSelected(settings)
-	for _, tierDef in ipairs(WORLDFORGED_TIERS) do
-		if not settings[tierDef.settingKey] then
-			return false
-		end
-	end
-	return true
-end
-
-local function addWorldforgedMappings(state, addMapping, placeName, itemID)
+local function addWorldforgedMappings(state, addMapping, placeName, itemID, discovery)
 	local settings = state.settings
-	local hasTierFilter = hasSelectedWorldforgedTier(settings)
-
+	local selectedTierLimit = selectedWorldforgedTierLimit(settings)
 	local tierIDs = buildWorldforgedTierIDs(itemID, state.worldforgedTierCache)
 	local added = false
-	for _, tierDef in ipairs(WORLDFORGED_TIERS) do
-		if settings[tierDef.settingKey] then
+	for tierIndex, tierDef in ipairs(WORLDFORGED_TIERS) do
+		if selectedTierLimit and tierIndex <= selectedTierLimit then
 			local tierItemID = tierIDs[tierDef.settingKey]
 			if tierItemID then
-				addMapping(placeName, tierDef.label, tierItemID, {
-					difficultyLabel = tierDef.difficultyLabel,
-					difficultyRank = tierDef.difficulty,
-				})
+				addMapping(placeName, tierDef.label, tierItemID, discoveryFallbackMetadata(discovery, tierDef.difficultyLabel, tierDef.difficulty))
 				added = true
 			end
 		end
 	end
 
-	if not added and (not hasTierFilter or hasAllWorldforgedTiersSelected(settings)) then
-		addMapping(placeName, "Worldforged", itemID)
+	if not added then
+		addMapping(placeName, "Worldforged", itemID, discoveryFallbackMetadata(discovery, "Worldforged", nil))
 		added = true
 	end
 
@@ -357,6 +376,8 @@ function provider.StartCollect(settings)
 			realmKey = adapter and adapter.realmKey or nil,
 			discoveries = 0,
 			vendorItems = 0,
+			worldforgedDiscoveries = 0,
+			worldforgedMappings = 0,
 		},
 	}
 end
@@ -383,14 +404,16 @@ function provider.StepCollect(state, addMapping, maxOps)
 					local dt = tonumber(discovery.dt) or -1
 
 					if dt == state.worldforgedType then
-						if addWorldforgedMappings(state, addMapping, placeName, itemID) then
+						state.stats.worldforgedDiscoveries = state.stats.worldforgedDiscoveries + 1
+						if addWorldforgedMappings(state, addMapping, placeName, itemID, discovery) then
 							state.stats.discoveries = state.stats.discoveries + 1
+							state.stats.worldforgedMappings = state.stats.worldforgedMappings + 1
 						end
 					elseif dt == state.mysticScrollType then
-						addMapping(placeName, "Mystic Scroll", itemID)
+						addMapping(placeName, "Mystic Scroll", itemID, discoveryFallbackMetadata(discovery))
 						state.stats.discoveries = state.stats.discoveries + 1
 					else
-						addMapping(placeName, "World Drop", itemID)
+						addMapping(placeName, "World Drop", itemID, discoveryFallbackMetadata(discovery))
 						state.stats.discoveries = state.stats.discoveries + 1
 					end
 				end

@@ -1,7 +1,7 @@
 local addonName, addon = ...
 
 -- Search source manager: owns provider registration, cache fingerprints, background rebuilds, and provider status.
-local CACHE_SCHEMA_VERSION = 5
+local CACHE_SCHEMA_VERSION = 7
 local CACHE_REFRESH_INTERVAL_SECONDS = 24 * 60 * 60
 local MAX_DUNGEON_MYTHIC_LEVEL_FALLBACK = 40
 local RAID_DIFFICULTY_NORMAL = 3
@@ -292,10 +292,18 @@ local function createCollector()
 		if type(metadata) ~= "table" then return nil end
 		local difficultyLabel = stripColorCodes(metadata.difficultyLabel)
 		local difficultyRank = tonumber(metadata.difficultyRank)
-		if not difficultyLabel and not difficultyRank then return nil end
+		local fallbackItemID = tonumber(metadata.fallbackItemID)
+		local fallbackItemLink = trim(metadata.fallbackItemLink)
+		local fallbackItemName = stripColorCodes(metadata.fallbackItemName)
+		local fallbackItemRarity = tonumber(metadata.fallbackItemRarity)
+		if not difficultyLabel and not difficultyRank and not fallbackItemID and not fallbackItemLink and not fallbackItemName and not fallbackItemRarity then return nil end
 		return {
 			difficultyLabel = difficultyLabel,
 			difficultyRank = difficultyRank,
+			fallbackItemID = fallbackItemID,
+			fallbackItemLink = fallbackItemLink,
+			fallbackItemName = fallbackItemName,
+			fallbackItemRarity = fallbackItemRarity,
 		}
 	end
 
@@ -314,6 +322,18 @@ local function createCollector()
 			if metadata.difficultyLabel then
 				existing.difficultyLabel = metadata.difficultyLabel
 			end
+		end
+		if not existing.fallbackItemID and metadata.fallbackItemID then
+			existing.fallbackItemID = metadata.fallbackItemID
+		end
+		if not existing.fallbackItemLink and metadata.fallbackItemLink then
+			existing.fallbackItemLink = metadata.fallbackItemLink
+		end
+		if not existing.fallbackItemName and metadata.fallbackItemName then
+			existing.fallbackItemName = metadata.fallbackItemName
+		end
+		if not existing.fallbackItemRarity and metadata.fallbackItemRarity then
+			existing.fallbackItemRarity = metadata.fallbackItemRarity
 		end
 	end
 

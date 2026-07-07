@@ -193,7 +193,7 @@ Refresh triggers:
 - Optional search cap: `Max Required Level` limits visible results while leveling (toggle + value in the search window).
 - The default max-level value is the current character level until the player sets a custom value.
 - `Max Required Level` is a search-time filter only and does not invalidate/rebuild the cache.
-- LootCollector Worldforged tiers (`ZG/MC/BWL/Naxxramas`) are configurable in Loot Sources options; if no tier is selected, the base Worldforged discovery item remains visible.
+- LootCollector Worldforged tiers (`ZG/MC/BWL/Naxxramas`) are configurable in Loot Sources options. The effective filter is inclusive from Zul'Gurub through the highest selected tier. If no tier is selected, or if selected tier IDs cannot be derived or resolved through client item info yet, the original LootCollector discovery item remains available as a search fallback.
 - AtlasLoot difficulty limits are cache-time filters because they change which item IDs are collected.
 
 ## Validation checklist
