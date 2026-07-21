@@ -10,7 +10,7 @@
 - Shows upgrade delta versus your currently equipped gear.
 - Provides a searchable upgrade list (`/is`) using optional data providers.
 - Shows known AtlasLoot item grades directly in search results, e.g. `M+10` or `Asc`.
-- Shows recent dropped upgrades in a small window.
+- Provides a movable and freely resizable search window with adaptive result columns.
 
 ## Data Providers
 - `LootCollector`
@@ -32,8 +32,6 @@ You can configure which providers to use. AtlasLoot search data supports both le
 	 > It is not possible to provide sensible default score values, as even the slightest modification to your build would make them invalid. 
 2. `/is`  
    Toggles the search window.
-3. `/idw`  
-   Shows ItemDropWatch help (`show`, `hide`, `clear`).
 
 ## Addon Commands
 - `/is status` (cache/provider status)

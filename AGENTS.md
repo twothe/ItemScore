@@ -27,10 +27,9 @@
 	- Tooltip scoring for inspected items.
 	- Upgrade delta against currently equipped gear.
 	- Search UI over cached runtime data from optional providers (`LootCollector`, `AtlasLoot`).
-	- Loot drop watch panel showing recently dropped upgrades.
 - Saved variables:
 	- Per-character: `ItemScoreData` (profiles, stat weights, profile UI state, loot-source settings).
-	- Global: `ItemDropWatchDB` (drop watch list and UI capacity), `ItemScoreCacheDB` (search catalog cache).
+	- Global: `ItemScoreCacheDB` (search catalog cache).
 
 ## 3. Documentation Index
 - [`./docs/loot-source-integration-plan.md`](./docs/loot-source-integration-plan.md): implemented architecture for runtime loot sources, provider filters, and cache refresh behavior.
@@ -44,4 +43,3 @@
 - Score: weighted sum of item stats (2H weapons normalized by `/2`).
 - Delta: candidate score minus weakest relevant equipped-slot score.
 - Upgrade: item with positive delta for at least one enabled profile.
-- DropWatch: floating frame listing recent dropped upgrades.

@@ -238,42 +238,139 @@ end
 --------------------------------------------------
 -- UI construction
 --------------------------------------------------
-local WIDTH, HEIGHT, ROW_HEIGHT, MAX_ROWS = 800, 440, 20, 100
-local frame = CreateFrame("Frame", "ItemScoreSearchFrame", UIParent, "UIPanelDialogTemplate")
-frame:SetSize(WIDTH, HEIGHT)
-frame:SetPoint("CENTER")
+local DEFAULT_WIDTH, DEFAULT_HEIGHT, ROW_HEIGHT, MAX_ROWS = 840, 460, 20, 100
+local SCORE_COLUMN_WIDTH = 100
+local COLUMN_GAP = 6
+local COLUMN_LEFT_INSET = 2
+local FLAT_TEXTURE = "Interface\\Buttons\\WHITE8X8"
+
+local function createPanel(parent)
+	local panel = CreateFrame("Frame", nil, parent)
+	panel:SetBackdrop({
+		bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
+		edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
+		tile = true,
+		tileSize = 16,
+		edgeSize = 12,
+		insets = { left = 3, right = 3, top = 3, bottom = 3 },
+	})
+	panel:SetBackdropColor(0.035, 0.038, 0.045, 0.94)
+	panel:SetBackdropBorderColor(0.34, 0.29, 0.20, 0.95)
+	return panel
+end
+
+local function getWindowSettings()
+	ItemScoreData = ItemScoreData or {}
+	if type(ItemScoreData.searchWindow) ~= "table" then
+		ItemScoreData.searchWindow = {}
+	end
+	return ItemScoreData.searchWindow
+end
+
+local function validDimension(value, fallback)
+	value = tonumber(value)
+	if not value or value ~= value or value <= 0 then
+		return fallback
+	end
+	return value
+end
+
+local windowSettings = getWindowSettings()
+local frame = CreateFrame("Frame", "ItemScoreSearchFrame", UIParent)
+frame:SetSize(
+	validDimension(windowSettings.width, DEFAULT_WIDTH),
+	validDimension(windowSettings.height, DEFAULT_HEIGHT)
+)
+frame:SetPoint(
+	type(windowSettings.point) == "string" and windowSettings.point or "CENTER",
+	UIParent,
+	type(windowSettings.relativePoint) == "string" and windowSettings.relativePoint or "CENTER",
+	tonumber(windowSettings.x) or 0,
+	tonumber(windowSettings.y) or 0
+)
+frame:SetFrameStrata("DIALOG")
 frame:SetMovable(true)
+frame:SetResizable(true)
 frame:EnableMouse(true)
 frame:RegisterForDrag("LeftButton")
-frame:SetScript("OnDragStart", frame.StartMoving)
-frame:SetScript("OnDragStop", frame.StopMovingOrSizing)
+frame:SetClampedToScreen(true)
+frame:SetBackdrop({
+	bgFile = "Interface\\DialogFrame\\UI-DialogBox-Background",
+	edgeFile = "Interface\\DialogFrame\\UI-DialogBox-Border",
+	tile = true,
+	tileSize = 32,
+	edgeSize = 24,
+	insets = { left = 7, right = 7, top = 7, bottom = 7 },
+})
+frame:SetBackdropColor(0.025, 0.028, 0.034, 0.98)
 frame:Hide()
 
-frame.title = frame:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-frame.title:SetPoint("TOP", frame, "TOP", 0, -9)
+local function saveWindowSettings()
+	local point, _, relativePoint, x, y = frame:GetPoint(1)
+	windowSettings.point = point or "CENTER"
+	windowSettings.relativePoint = relativePoint or windowSettings.point
+	windowSettings.x = x or 0
+	windowSettings.y = y or 0
+	windowSettings.width = frame:GetWidth()
+	windowSettings.height = frame:GetHeight()
+end
+
+frame:SetScript("OnDragStart", function(self)
+	self:StartMoving()
+end)
+frame:SetScript("OnDragStop", function(self)
+	self:StopMovingOrSizing()
+	saveWindowSettings()
+end)
+
+frame.title = frame:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+frame.title:SetPoint("TOPLEFT", frame, "TOPLEFT", 18, -14)
 frame.title:SetText("ItemScore Search")
+frame.title:SetTextColor(0.76, 0.88, 1.0)
 
-local profileDrop = CreateFrame("Frame", "ISSearchProfileDD", frame, "UIDropDownMenuTemplate")
-profileDrop:SetPoint("TOPLEFT", 16, -40)
+local titleAccent = frame:CreateTexture(nil, "ARTWORK")
+titleAccent:SetTexture(FLAT_TEXTURE)
+titleAccent:SetVertexColor(0.34, 0.29, 0.20, 0.85)
+titleAccent:SetPoint("TOPLEFT", frame, "TOPLEFT", 15, -37)
+titleAccent:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -15, -37)
+titleAccent:SetHeight(1)
 
-local slotDrop = CreateFrame("Frame", "ISSearchSlotDD", frame, "UIDropDownMenuTemplate")
-slotDrop:SetPoint("LEFT", profileDrop, "RIGHT", 120, 0)
+local closeButton = CreateFrame("Button", nil, frame, "UIPanelCloseButton")
+closeButton:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -5, -5)
 
-local searchBtn = CreateFrame("Button", nil, frame, "UIPanelButtonTemplate")
+local toolbarPanel = createPanel(frame)
+toolbarPanel:SetPoint("TOPLEFT", frame, "TOPLEFT", 14, -43)
+toolbarPanel:SetPoint("TOPRIGHT", frame, "TOPRIGHT", -14, -43)
+toolbarPanel:SetHeight(54)
+
+local controlsRow = CreateFrame("Frame", nil, toolbarPanel)
+controlsRow:SetSize(550, 40)
+controlsRow:SetPoint("LEFT", toolbarPanel, "LEFT", 14, 0)
+
+local profileDrop = CreateFrame("Frame", "ISSearchProfileDD", controlsRow, "UIDropDownMenuTemplate")
+profileDrop:SetPoint("LEFT", controlsRow, "LEFT", -16, 0)
+
+local slotDrop = CreateFrame("Frame", "ISSearchSlotDD", controlsRow, "UIDropDownMenuTemplate")
+slotDrop:SetPoint("LEFT", controlsRow, "LEFT", 120, 0)
+
+local searchBtn = CreateFrame("Button", nil, controlsRow, "UIPanelButtonTemplate")
 searchBtn:SetSize(110, 22)
 searchBtn:SetText("Search")
-searchBtn:SetPoint("LEFT", slotDrop, "RIGHT", 16, 0)
+searchBtn:SetPoint("LEFT", controlsRow, "LEFT", 284, 0)
 
-local maxLevelLabel = frame:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-maxLevelLabel:SetPoint("LEFT", searchBtn, "RIGHT", 14, 0)
+local maxLevelLabel = controlsRow:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+maxLevelLabel:SetHeight(22)
+maxLevelLabel:SetPoint("LEFT", controlsRow, "LEFT", 408, 0)
 maxLevelLabel:SetText("Max Lvl")
+maxLevelLabel:SetTextColor(0.95, 0.88, 0.68)
+maxLevelLabel:SetJustifyV("MIDDLE")
 
-local maxLevelEdit = addon.CreateEditBox(frame, 44)
+local maxLevelEdit = addon.CreateEditBox(controlsRow, 44)
 maxLevelEdit:SetPoint("LEFT", maxLevelLabel, "RIGHT", 6, 0)
 maxLevelEdit:SetNumeric(true)
 maxLevelEdit:SetText("0")
 
-local maxLevelToggle = addon.CreateCheckButton(frame, "")
+local maxLevelToggle = addon.CreateCheckButton(controlsRow, "")
 maxLevelToggle:SetSize(22, 22)
 maxLevelToggle:SetPoint("LEFT", maxLevelEdit, "RIGHT", -2, 0)
 maxLevelToggle:SetChecked(false)
@@ -288,22 +385,148 @@ local function clearMaxLevelEditFocus()
 	end
 end
 
-local scrollFrame = CreateFrame("ScrollFrame", "ISSearchScroll", frame, "UIPanelScrollFrameTemplate")
-scrollFrame:SetPoint("TOPLEFT", 12, -80)
-scrollFrame:SetPoint("BOTTOMRIGHT", -28, 12)
+local resultsPanel = createPanel(frame)
+resultsPanel:SetPoint("TOPLEFT", frame, "TOPLEFT", 14, -106)
+resultsPanel:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -14, 14)
+
+local columnHeader = CreateFrame("Frame", nil, resultsPanel)
+columnHeader:SetHeight(22)
+columnHeader:SetPoint("TOPLEFT", resultsPanel, "TOPLEFT", 8, -6)
+columnHeader:SetPoint("TOPRIGHT", resultsPanel, "TOPRIGHT", -28, -6)
+
+local function createColumnLabel(parent, text)
+	local label = parent:CreateFontString(nil, "OVERLAY", "GameFontNormalSmall")
+	label:SetText(text)
+	label:SetTextColor(0.86, 0.78, 0.58)
+	label:SetJustifyH("LEFT")
+	label:SetHeight(ROW_HEIGHT)
+	if label.SetWordWrap then label:SetWordWrap(false) end
+	return label
+end
+
+columnHeader.scoreText = createColumnLabel(columnHeader, "Score / Delta")
+columnHeader.itemLink = createColumnLabel(columnHeader, "Item")
+columnHeader.dungeonText = createColumnLabel(columnHeader, "Place")
+columnHeader.bossText = createColumnLabel(columnHeader, "Source")
+
+local headerDivider = columnHeader:CreateTexture(nil, "ARTWORK")
+headerDivider:SetTexture(FLAT_TEXTURE)
+headerDivider:SetVertexColor(0.34, 0.29, 0.20, 0.85)
+headerDivider:SetPoint("BOTTOMLEFT", columnHeader, "BOTTOMLEFT", 0, 0)
+headerDivider:SetPoint("BOTTOMRIGHT", columnHeader, "BOTTOMRIGHT", 0, 0)
+headerDivider:SetHeight(1)
+
+local scrollFrame = CreateFrame("ScrollFrame", "ISSearchScroll", resultsPanel, "UIPanelScrollFrameTemplate")
+scrollFrame:SetPoint("TOPLEFT", resultsPanel, "TOPLEFT", 8, -30)
+scrollFrame:SetPoint("BOTTOMRIGHT", resultsPanel, "BOTTOMRIGHT", -28, 8)
 frame:HookScript("OnMouseDown", clearMaxLevelEditFocus)
 scrollFrame:HookScript("OnMouseDown", clearMaxLevelEditFocus)
-local SCROLL_PADDING = 16
 
 local scrollChild = CreateFrame("Frame", nil, scrollFrame)
-scrollChild:SetWidth(WIDTH - 40)
+scrollChild:SetWidth(1)
 scrollFrame:SetScrollChild(scrollChild)
-scrollChild:SetPoint("RIGHT", -SCROLL_PADDING - 4, 0)
+scrollChild:SetPoint("TOPLEFT", scrollFrame, "TOPLEFT", 0, 0)
+
+local function layoutColumns(container)
+	local width = container:GetWidth() or 0
+	local flexibleWidth = math.max(
+		0,
+		(width - COLUMN_LEFT_INSET - SCORE_COLUMN_WIDTH - (COLUMN_GAP * 3)) / 3
+	)
+
+	container.scoreText:ClearAllPoints()
+	container.scoreText:SetPoint("LEFT", container, "LEFT", COLUMN_LEFT_INSET, 0)
+	container.scoreText:SetWidth(SCORE_COLUMN_WIDTH)
+	container.itemLink:ClearAllPoints()
+	container.itemLink:SetPoint("LEFT", container.scoreText, "RIGHT", COLUMN_GAP, 0)
+	container.itemLink:SetWidth(flexibleWidth)
+	container.dungeonText:ClearAllPoints()
+	container.dungeonText:SetPoint("LEFT", container.itemLink, "RIGHT", COLUMN_GAP, 0)
+	container.dungeonText:SetWidth(flexibleWidth)
+	container.bossText:ClearAllPoints()
+	container.bossText:SetPoint("LEFT", container.dungeonText, "RIGHT", COLUMN_GAP, 0)
+	container.bossText:SetWidth(flexibleWidth)
+end
+
+layoutColumns(columnHeader)
 
 local rows = {}
+local hoveredItemRow = nil
+local tooltipModifierWatcher = CreateFrame("Frame")
+
+local function hideCompareTooltips()
+	if ShoppingTooltip1 then ShoppingTooltip1:Hide() end
+	if ShoppingTooltip2 then ShoppingTooltip2:Hide() end
+end
+
+local function showItemTooltip(row)
+	if not row or not row.link then return end
+
+	GameTooltip:SetOwner(row, "ANCHOR_RIGHT")
+	GameTooltip:SetHyperlink(row.link)
+	if type(addon.GetTooltipDifficultyInfo) == "function" and isAtlasDifficultyLabel(row.difficultyLabel) then
+		local tooltipInfo = addon.GetTooltipDifficultyInfo(GameTooltip)
+		if shouldUseTooltipDifficulty({ difficultyLabel = row.difficultyLabel }, tooltipInfo) then
+			row.difficultyLabel = tooltipInfo.difficultyLabel
+			row.sources = replaceSourceDifficultyLabels(row.sources, row.difficultyLabel)
+			if row.baseItemText then
+				row.itemLink:SetText(row.baseItemText .. difficultySuffix(row.difficultyLabel))
+			end
+		end
+	end
+	if type(row.sources) == "table" and #row.sources > 1 then
+		GameTooltip:AddLine(" ")
+		GameTooltip:AddLine("Known Sources", 0.9, 0.9, 0.9)
+		local maxSources = math.min(#row.sources, 8)
+		for sourceIndex = 1, maxSources do
+			local sourceData = row.sources[sourceIndex]
+			local line = string.format(
+				"%s - %s",
+				sourceData.place or "Unknown Place",
+				sourceData.source or "Unknown Source"
+			)
+			if sourceData.difficultyLabel then
+				line = line .. " (" .. sourceData.difficultyLabel .. ")"
+			end
+			GameTooltip:AddLine(line, 0.8, 0.8, 0.8)
+		end
+		if #row.sources > maxSources then
+			GameTooltip:AddLine(string.format("+%d more", #row.sources - maxSources), 0.6, 0.6, 0.6)
+		end
+	end
+	GameTooltip:Show()
+
+	local compareEnabled = IsShiftKeyDown and IsShiftKeyDown() and true or false
+	if compareEnabled and GameTooltip_ShowCompareItem then
+		GameTooltip_ShowCompareItem(GameTooltip)
+	else
+		hideCompareTooltips()
+	end
+	row.compareShown = compareEnabled
+end
+
+local function watchTooltipModifier()
+	if
+		hoveredItemRow
+		and IsShiftKeyDown
+		and hoveredItemRow.compareShown ~= (IsShiftKeyDown() and true or false)
+	then
+		showItemTooltip(hoveredItemRow)
+	end
+end
+
+local function stopItemTooltip(row)
+	if hoveredItemRow ~= row then return end
+	hoveredItemRow = nil
+	row.compareShown = nil
+	tooltipModifierWatcher:SetScript("OnUpdate", nil)
+	GameTooltip:Hide()
+	hideCompareTooltips()
+end
+
 for rowIndex = 1, MAX_ROWS do
 	local row = CreateFrame("Frame", nil, scrollChild)
-	row:SetSize(scrollChild:GetWidth() - SCROLL_PADDING, ROW_HEIGHT)
+	row:SetSize(1, ROW_HEIGHT)
 	row:EnableMouse(true)
 	if rowIndex == 1 then
 		row:SetPoint("TOPLEFT")
@@ -312,64 +535,86 @@ for rowIndex = 1, MAX_ROWS do
 	end
 
 	row.scoreText = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-	row.scoreText:SetWidth(100)
+	row.scoreText:SetHeight(ROW_HEIGHT)
 	row.scoreText:SetJustifyH("LEFT")
-	row.scoreText:SetPoint("LEFT", 2, 0)
+	if row.scoreText.SetWordWrap then row.scoreText:SetWordWrap(false) end
 
 	row.itemLink = row:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-	row.itemLink:SetPoint("LEFT", row.scoreText, "RIGHT", 4, 0)
-	row.itemLink:SetWidth(270)
+	row.itemLink:SetHeight(ROW_HEIGHT)
 	row.itemLink:SetJustifyH("LEFT")
+	if row.itemLink.SetWordWrap then row.itemLink:SetWordWrap(false) end
 
 	row.dungeonText = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-	row.dungeonText:SetPoint("LEFT", row.itemLink, "RIGHT", 4, 0)
-	row.dungeonText:SetWidth(190)
+	row.dungeonText:SetHeight(ROW_HEIGHT)
 	row.dungeonText:SetJustifyH("LEFT")
+	if row.dungeonText.SetWordWrap then row.dungeonText:SetWordWrap(false) end
 
 	row.bossText = row:CreateFontString(nil, "OVERLAY", "GameFontHighlightSmall")
-	row.bossText:SetPoint("LEFT", row.dungeonText, "RIGHT", 4, 0)
-	row.bossText:SetWidth(180)
+	row.bossText:SetHeight(ROW_HEIGHT)
 	row.bossText:SetJustifyH("LEFT")
+	if row.bossText.SetWordWrap then row.bossText:SetWordWrap(false) end
+
+	row.background = row:CreateTexture(nil, "BACKGROUND")
+	row.background:SetAllPoints()
+	row.background:SetTexture(FLAT_TEXTURE)
+	row.backgroundColor = { 0.035, 0.038, 0.045, rowIndex % 2 == 0 and 0.82 or 0.55 }
+	row.background:SetVertexColor(unpack(row.backgroundColor))
+	layoutColumns(row)
 
 	row:SetScript("OnEnter", function(self)
+		self.background:SetVertexColor(0.10, 0.12, 0.15, 0.95)
 		if not self.link then return end
-		GameTooltip:SetOwner(self, "ANCHOR_CURSOR")
-		GameTooltip:SetHyperlink(self.link)
-		if type(addon.GetTooltipDifficultyInfo) == "function" and isAtlasDifficultyLabel(self.difficultyLabel) then
-			local tooltipInfo = addon.GetTooltipDifficultyInfo(GameTooltip)
-			if shouldUseTooltipDifficulty({ difficultyLabel = self.difficultyLabel }, tooltipInfo) then
-				self.difficultyLabel = tooltipInfo.difficultyLabel
-				self.sources = replaceSourceDifficultyLabels(self.sources, self.difficultyLabel)
-				if self.baseItemText then
-					self.itemLink:SetText(self.baseItemText .. difficultySuffix(self.difficultyLabel))
-				end
-			end
-		end
-		if type(self.sources) == "table" and #self.sources > 1 then
-			GameTooltip:AddLine(" ")
-			GameTooltip:AddLine("Known Sources", 0.9, 0.9, 0.9)
-			local maxSources = math.min(#self.sources, 8)
-			for i = 1, maxSources do
-				local sourceData = self.sources[i]
-				local line = string.format("%s - %s", sourceData.place or "Unknown Place", sourceData.source or "Unknown Source")
-				if sourceData.difficultyLabel then
-					line = line .. " (" .. sourceData.difficultyLabel .. ")"
-				end
-				GameTooltip:AddLine(line, 0.8, 0.8, 0.8)
-			end
-			if #self.sources > maxSources then
-				GameTooltip:AddLine(string.format("+%d more", #self.sources - maxSources), 0.6, 0.6, 0.6)
-			end
-		end
-		GameTooltip:Show()
+		hoveredItemRow = self
+		showItemTooltip(self)
+		tooltipModifierWatcher:SetScript("OnUpdate", watchTooltipModifier)
 	end)
 
-	row:SetScript("OnLeave", function()
-		if GameTooltip:IsShown() then GameTooltip:Hide() end
+	row:SetScript("OnLeave", function(self)
+		self.background:SetVertexColor(unpack(self.backgroundColor))
+		stopItemTooltip(self)
 	end)
+	row:SetScript("OnHide", stopItemTooltip)
 	row:SetScript("OnMouseDown", clearMaxLevelEditFocus)
 
 	rows[rowIndex] = row
+end
+
+local function layoutSearchWindow()
+	local contentWidth = math.max(0, scrollFrame:GetWidth() or 0)
+	scrollChild:SetWidth(contentWidth)
+	layoutColumns(columnHeader)
+	for _, row in ipairs(rows) do
+		row:SetWidth(contentWidth)
+		layoutColumns(row)
+	end
+	scrollFrame:UpdateScrollChildRect()
+end
+
+frame.resizeGrip = CreateFrame("Button", nil, frame)
+frame.resizeGrip:SetSize(18, 18)
+frame.resizeGrip:SetPoint("BOTTOMRIGHT", frame, "BOTTOMRIGHT", -5, 5)
+frame.resizeGrip:SetNormalTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Up")
+frame.resizeGrip:SetHighlightTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Highlight")
+frame.resizeGrip:SetPushedTexture("Interface\\ChatFrame\\UI-ChatIM-SizeGrabber-Down")
+frame.resizeGrip:SetScript("OnMouseDown", function(_, button)
+	if button == "LeftButton" then
+		frame:StartSizing("BOTTOMRIGHT")
+	end
+end)
+frame.resizeGrip:SetScript("OnMouseUp", function(_, button)
+	if button == "LeftButton" then
+		frame:StopMovingOrSizing()
+		saveWindowSettings()
+		layoutSearchWindow()
+	end
+end)
+
+frame:SetScript("OnSizeChanged", layoutSearchWindow)
+frame:SetScript("OnHide", saveWindowSettings)
+layoutSearchWindow()
+
+if type(UISpecialFrames) == "table" then
+	UISpecialFrames[#UISpecialFrames + 1] = "ItemScoreSearchFrame"
 end
 
 local selectedProfile
@@ -550,8 +795,10 @@ local function refreshRows(data)
 		local rowData = data[rowIndex]
 		if rowData then
 			if rowData.isHeader then
+				row.backgroundColor = { 0.13, 0.10, 0.05, 0.90 }
+				row.background:SetVertexColor(unpack(row.backgroundColor))
 				row.scoreText:SetText("")
-				row.itemLink:SetText("|cff00ff00" .. rowData.label .. "|r")
+				row.itemLink:SetText("|cffffd66b" .. rowData.label .. "|r")
 				row.dungeonText:SetText("")
 				row.bossText:SetText("")
 				row.link = nil
@@ -559,6 +806,8 @@ local function refreshRows(data)
 				row.baseItemText = nil
 				row.difficultyLabel = nil
 			else
+				row.backgroundColor = { 0.035, 0.038, 0.045, rowIndex % 2 == 0 and 0.82 or 0.55 }
+				row.background:SetVertexColor(unpack(row.backgroundColor))
 				local delta = addon.CompareDelta(rowData.link, selectedProfile)
 				local deltaInvalid = type(delta) ~= "number" or delta ~= delta or math.abs(delta) >= 999999
 				if deltaInvalid then

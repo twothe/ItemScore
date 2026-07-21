@@ -66,12 +66,12 @@
 - Regression: LootCollector provider must respect per-frame `maxOps` budget even when many vendor records contain zero items.
 - Regression: if delta calculation returns sentinel/invalid extreme values for scaled items, search row must display `?` instead of large negative garbage.
 - Regression: repeated unresolved/custom item IDs must not leave the search button stuck on `Fetching...`; after bounded retries, search remains usable and shows available results.
-
-## DropWatch lifecycle
-- Regression: dropped upgrade entries in `ItemDropWatch` stay fully visible for about 60 seconds, then fade out smoothly, and are removed shortly after.
-- Regression: stale `ItemDropWatchDB.items` entries from previous sessions must not persist in the window after login/reload.
-- Regression: pending GET_ITEM_INFO entries that resolve to non-upgrades must be removed from pending state to avoid unbounded growth.
-- Regression: DropWatch row rendering must never throw Lua errors when an item has an unknown/custom rarity (e.g. quality `7`); row text must still render with fallback color.
+- Search window resize grip must resize from the bottom-right corner without enforcing an addon-level minimum size.
+- Search result layout must keep the score/delta column at 100 pixels and divide all remaining row width equally among item, place, and source.
+- Search window size and position must persist per character across reload/restart.
+- Search toolbar controls must share one vertical center line, and the `Max Lvl` label must remain clearly readable against the dark panel.
+- Search toolbar controls must remain left-anchored when the window width changes instead of shifting past the left window edge.
+- While hovering a search item, pressing and releasing Shift must immediately show and hide comparison tooltips without requiring the pointer to leave the row.
 
 ## Locale compatibility
 - On non-English clients, class-restricted items must still be filtered correctly (class list parsing must use localized `ITEM_CLASSES_ALLOWED` label).
