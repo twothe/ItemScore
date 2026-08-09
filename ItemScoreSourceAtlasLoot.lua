@@ -1,3 +1,4 @@
+-- AtlasLoot search-provider adapter for legacy modules and monolithic 8.x menu/item data.
 local addonName, addon = ...
 
 local provider = {
@@ -50,6 +51,23 @@ local EXPANSION_MODULE_BY_KEY = {
 
 local EXPANSION_ORDER = { "classic", "tbc", "wrath" }
 
+local EXPANSION_META_BY_KEY = {
+	classic = MODULE_EXPANSIONS[EXPANSION_MODULE_BY_KEY.classic],
+	tbc = MODULE_EXPANSIONS[EXPANSION_MODULE_BY_KEY.tbc],
+	wrath = MODULE_EXPANSIONS[EXPANSION_MODULE_BY_KEY.wrath],
+}
+
+local EXPANSION_BY_LOOT_TYPE = {
+	ClassicDungeon = "classic",
+	ClassicDungeonExt = "classic",
+	ClassicRaid = "classic",
+	BCDungeon = "tbc",
+	BCkarazhanCrypts = "tbc",
+	BCRaid = "tbc",
+	WrathDungeon = "wrath",
+	WrathRaid = "wrath",
+}
+
 local function clean(text)
 	text = tostring(text or "")
 	text = string.gsub(text, "|c%x%x%x%x%x%x%x%x", "")
@@ -85,17 +103,40 @@ local function loadAddonIfInstalled(addonName)
 	return addonLoaded(addonName) or loaded == true or loaded == 1
 end
 
-local function resolveAtlasLootObject()
-	if _G.ATLASLOOT then return _G.ATLASLOOT end
-	if _G.AtlasLoot then return _G.AtlasLoot end
-	if type(LibStub) ~= "function" then return nil end
+local function isAtlasLootAddonObject(candidate)
+	if type(candidate) ~= "table" then return false end
+	if type(candidate.AddItemData) == "function" then return true end
+	if type(candidate.InitializeDataTables) == "function" then return true end
+	if type(candidate.IsLootTableAvailable) == "function" then return true end
+	return type(candidate.data) == "table" and type(candidate.Difficulties) == "table"
+end
 
-	local ok, atlasLoot = pcall(function()
-		local aceAddon = LibStub("AceAddon-3.0", true)
-		if not aceAddon then return nil end
-		return aceAddon:GetAddon("AtlasLoot", true)
-	end)
-	if ok then return atlasLoot end
+local function resolveAceAddonLibrary()
+	local libStub = _G.LibStub
+	if type(libStub) == "table" and type(libStub.GetLibrary) == "function" then
+		local ok, aceAddon = pcall(libStub.GetLibrary, libStub, "AceAddon-3.0", true)
+		if ok then return aceAddon end
+	elseif type(libStub) == "function" then
+		local ok, aceAddon = pcall(libStub, "AceAddon-3.0", true)
+		if ok then return aceAddon end
+	end
+	return nil
+end
+
+local function resolveAtlasLootObject()
+	if isAtlasLootAddonObject(_G.ATLASLOOT) then return _G.ATLASLOOT end
+	local aceAddon = resolveAceAddonLibrary()
+	if aceAddon and type(aceAddon.GetAddon) == "function" then
+		local ok, atlasLoot = pcall(function()
+			return aceAddon:GetAddon("AtlasLoot", true)
+		end)
+		if ok and isAtlasLootAddonObject(atlasLoot) then return atlasLoot end
+	end
+
+	-- AtlasLoot 8.1 names its main UI frame "AtlasLoot", which creates the
+	-- unrelated _G.AtlasLoot frame. Only accept this global in older releases
+	-- when it actually exposes the addon/data contract.
+	if isAtlasLootAddonObject(_G.AtlasLoot) then return _G.AtlasLoot end
 	return nil
 end
 
@@ -165,7 +206,48 @@ local function loadAtlasLootModule(atlasLoot, moduleName)
 	return loadAddonIfInstalled(moduleName)
 end
 
+local function getMonolithicExpansionIndex(atlasLoot)
+	local collection = atlasLoot and atlasLoot.ui and atlasLoot.ui.menus and atlasLoot.ui.menus.collection
+	local byDataID = {}
+	local foundCollection = false
+	if type(collection) ~= "table" then return byDataID, foundCollection end
+
+	for _, expansionKey in ipairs(EXPANSION_ORDER) do
+		local collectionKey = "DungeonsAndRaids" .. string.upper(expansionKey)
+		local entries = collection[collectionKey]
+		if type(entries) == "table" then
+			foundCollection = true
+			for _, entry in ipairs(entries) do
+				local dataID = type(entry) == "table" and entry[1]
+				if dataID ~= nil then
+					byDataID[dataID] = expansionKey
+					byDataID[tostring(dataID)] = expansionKey
+				end
+			end
+		end
+	end
+
+	return byDataID, foundCollection
+end
+
+local function betaExpansionMeta(lootMenu, dataID, expansionByDataID, hasExpansionCollections)
+	local moduleMeta = type(lootMenu) == "table" and MODULE_EXPANSIONS[lootMenu.Module]
+	if moduleMeta then return moduleMeta end
+
+	local expansionKey = expansionByDataID[dataID] or expansionByDataID[tostring(dataID)]
+	if expansionKey then return EXPANSION_META_BY_KEY[expansionKey] end
+	if hasExpansionCollections then return nil end
+
+	-- Early 8.x betas may expose menus without the collection index. The exact
+	-- dungeon/raid type remains a safe fallback, unlike a broad name match.
+	expansionKey = type(lootMenu) == "table" and EXPANSION_BY_LOOT_TYPE[lootMenu.Type]
+	return expansionKey and EXPANSION_META_BY_KEY[expansionKey] or nil
+end
+
 local function ensureExpansionModulesLoaded(atlasLoot, settings, includeAllExpansions)
+	local _, hasExpansionCollections = getMonolithicExpansionIndex(atlasLoot)
+	if hasExpansionCollections then return end
+
 	settings = settings or {}
 	for _, expansionKey in ipairs(EXPANSION_ORDER) do
 		if includeAllExpansions or expansionEnabled(expansionKey, settings) then
@@ -194,6 +276,10 @@ end
 
 local function getAtlasTypeMaxDifficulty(atlasLoot, typeName)
 	local difficulties = atlasLoot and atlasLoot.Difficulties
+	if difficulties and type(difficulties.GetMax) == "function" then
+		local ok, maxDifficulty = pcall(difficulties.GetMax, difficulties, typeName)
+		if ok and tonumber(maxDifficulty) then return tonumber(maxDifficulty) end
+	end
 	local difficultyData = difficulties and typeName and difficulties[typeName]
 	return tonumber(difficultyData and difficultyData.Max)
 end
@@ -420,6 +506,7 @@ end
 -- Builds source records from AtlasLoot 8.x beta menus and item data.
 local function buildBetaCollectSources(atlasLoot, settings)
 	local menusData, itemData = getBetaDataTables(atlasLoot)
+	local expansionByDataID, hasExpansionCollections = getMonolithicExpansionIndex(atlasLoot)
 	local meta = {
 		ready = menusData ~= nil and itemData ~= nil,
 		scannedMenus = 0,
@@ -431,7 +518,7 @@ local function buildBetaCollectSources(atlasLoot, settings)
 
 	for dataID, lootMenu in pairs(menusData) do
 		if type(lootMenu) == "table" then
-			local moduleMeta = MODULE_EXPANSIONS[lootMenu.Module]
+			local moduleMeta = betaExpansionMeta(lootMenu, dataID, expansionByDataID, hasExpansionCollections)
 			if moduleMeta then
 				meta.scannedMenus = meta.scannedMenus + 1
 			end
@@ -545,10 +632,11 @@ end
 local function buildBetaRaidChoices(atlasLoot)
 	local menusData = getBetaDataTables(atlasLoot)
 	if type(menusData) ~= "table" then return nil end
+	local expansionByDataID, hasExpansionCollections = getMonolithicExpansionIndex(atlasLoot)
 	local byExpansion = createRaidChoiceMap()
 	for dataID, lootMenu in pairs(menusData) do
 		if type(lootMenu) == "table" then
-			local moduleMeta = MODULE_EXPANSIONS[lootMenu.Module]
+			local moduleMeta = betaExpansionMeta(lootMenu, dataID, expansionByDataID, hasExpansionCollections)
 			if moduleMeta then
 				local _, hasRaid = lootTypeFlags(lootMenu.Type)
 				if hasRaid then

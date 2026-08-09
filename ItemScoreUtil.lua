@@ -163,6 +163,100 @@ function addon.TuneAdaptiveBudget(currentBudget, elapsedMs, targetMs, minBudget,
 	return budget
 end
 
+local INVENTORY_TYPE_BY_ID = {
+	[1] = "INVTYPE_HEAD",
+	[2] = "INVTYPE_NECK",
+	[3] = "INVTYPE_SHOULDER",
+	[4] = "INVTYPE_BODY",
+	[5] = "INVTYPE_CHEST",
+	[6] = "INVTYPE_WAIST",
+	[7] = "INVTYPE_LEGS",
+	[8] = "INVTYPE_FEET",
+	[9] = "INVTYPE_WRIST",
+	[10] = "INVTYPE_HAND",
+	[11] = "INVTYPE_FINGER",
+	[12] = "INVTYPE_TRINKET",
+	[13] = "INVTYPE_WEAPON",
+	[14] = "INVTYPE_SHIELD",
+	[15] = "INVTYPE_RANGED",
+	[16] = "INVTYPE_CLOAK",
+	[17] = "INVTYPE_2HWEAPON",
+	[18] = "INVTYPE_BAG",
+	[19] = "INVTYPE_TABARD",
+	[20] = "INVTYPE_ROBE",
+	[21] = "INVTYPE_WEAPONMAINHAND",
+	[22] = "INVTYPE_WEAPONOFFHAND",
+	[23] = "INVTYPE_HOLDABLE",
+	[24] = "INVTYPE_AMMO",
+	[25] = "INVTYPE_THROWN",
+	[26] = "INVTYPE_RANGEDRIGHT",
+	[27] = "INVTYPE_QUIVER",
+	[28] = "INVTYPE_RELIC",
+}
+
+local function itemIDFromValue(value)
+	local numeric = tonumber(value)
+	if numeric and numeric > 0 then return numeric end
+	if type(value) ~= "string" then return nil end
+	return tonumber(string.match(value, "item:(%d+)"))
+end
+
+local function createAscensionItem(itemID)
+	local itemFactory = _G.Item
+	if type(itemFactory) ~= "table" or type(itemFactory.CreateFromID) ~= "function" then return nil end
+	local ok, itemObject = pcall(itemFactory.CreateFromID, itemFactory, itemID)
+	if ok then return itemObject end
+	return nil
+end
+
+local function callItemMethod(itemObject, methodName)
+	local method = itemObject and itemObject[methodName]
+	if type(method) ~= "function" then return nil end
+	local ok, value = pcall(method, itemObject)
+	if ok then return value end
+	return nil
+end
+
+-- Returns the legacy GetItemInfo tuple, with Ascension's Item API as the
+-- authoritative fallback for custom difficulty IDs absent from the WDB cache.
+function addon.GetItemInfoCompat(value)
+	local name, link, rarity, itemLevel, requiredLevel, itemType, subType, stackCount, invType, icon, sellPrice = GetItemInfo(value)
+	if name then
+		return name, link, rarity, itemLevel, requiredLevel, itemType, subType, stackCount, invType, icon, sellPrice
+	end
+
+	local itemID = itemIDFromValue(value)
+	if not itemID then return nil end
+	local itemObject = createAscensionItem(itemID)
+	local info = callItemMethod(itemObject, "GetInfoInstant")
+	if type(info) ~= "table" or not info.name then return nil end
+
+	local resolvedLink = info.link or callItemMethod(itemObject, "GetLink")
+	local classID = tonumber(info.classID)
+	local subclassID = tonumber(info.subclassID)
+	local className = info.className or (classID and _G["ITEM_CLASS_" .. tostring(classID)])
+	local subclassName = info.subclassName
+	if not subclassName and classID and subclassID then
+		subclassName = _G["ITEM_SUBCLASS_" .. tostring(classID) .. "_" .. tostring(subclassID)]
+	end
+	local equipLocation = info.equipLoc or info.inventoryTypeName
+	if not equipLocation or not string.match(tostring(equipLocation), "^INVTYPE_") then
+		equipLocation = INVENTORY_TYPE_BY_ID[tonumber(info.inventoryType)]
+	end
+
+	return info.name,
+		resolvedLink or ("item:" .. tostring(itemID) .. ":::::::::"),
+		tonumber(info.quality) or 0,
+		tonumber(info.itemLevel) or 0,
+		tonumber(info.requiredLevel) or 0,
+		className,
+		subclassName,
+		tonumber(info.stackCount or info.maxStack) or 1,
+		equipLocation,
+		info.icon or info.iconFileID,
+		tonumber(info.sellPrice) or 0
+end
+
 local armorAllowed = {
 	WARRIOR = {
 		cloth = true,
@@ -331,7 +425,7 @@ local function normalizedEquipArmorKey(itemType, subType, equipLoc)
 end
 
 function addon.CanPlayerEquip(itemLink)
-	local name, _, _, _, reqLevel, itemType, subType, _, equipLoc = GetItemInfo(itemLink)
+	local name, _, _, _, reqLevel, itemType, subType, _, equipLoc = addon.GetItemInfoCompat(itemLink)
 	if not name or equipLoc == "" then return false end
 
 	classCheckTip:ClearLines()
@@ -357,7 +451,7 @@ function addon.CanPlayerEquip(itemLink)
 end
 
 function addon.GetInventoryType(itemLink)
-	local _, _, _, _, _, _, _, _, invType = GetItemInfo(itemLink)
+	local _, _, _, _, _, _, _, _, invType = addon.GetItemInfoCompat(itemLink)
 	if (invType == nil or strtrim(invType) == "") then
 		return nil
 	else

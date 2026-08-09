@@ -35,16 +35,20 @@ Important limitation:
 
 ### AtlasLoot
 - Main addon object: `ATLASLOOT` / `LibStub("AceAddon-3.0"):GetAddon("AtlasLoot")`.
+- AtlasLoot 8.1 also creates a UI frame named `AtlasLoot`, causing `_G.AtlasLoot` to reference the frame rather than the addon object; ItemScore therefore validates global candidates and prefers AceAddon resolution.
+- Legacy clients expose `LibStub` as a callable table, so ItemScore resolves `AceAddon-3.0` through `LibStub:GetLibrary(...)` and retains function-style LibStub only as a compatibility fallback.
 - AtlasLoot Ascension 8.x beta keeps global `AtlasLoot_Data` only as a compatibility stub.
 - AtlasLoot Ascension 8.x beta stores instance menus in `AtlasLoot.ui.menus.data` and item rows in `AtlasLoot.data.item`.
+- AtlasLoot Ascension 8.1+ is monolithic: instance menus no longer carry expansion-module metadata, and expansion ownership is listed in `AtlasLoot.ui.menus.collection.DungeonsAndRaidsCLASSIC/TBC/WRATH`.
+- AtlasLoot Ascension 8.1+ exposes difficulty caps through `AtlasLoot.Difficulties:GetMax(typeName)` rather than direct type-indexed tables.
 - Legacy AtlasLoot builds store boss loot in global `AtlasLoot_Data`.
-- Expansion modules are load-on-demand (`AtlasLoot_OriginalWoW`, `AtlasLoot_BurningCrusade`, `AtlasLoot_WrathoftheLichKing`, etc.).
-- `AtlasLoot:IsLootTableAvailable(moduleName)` expects the real module addon name, including underscores.
+- Split-module releases use load-on-demand expansion addons (`AtlasLoot_OriginalWoW`, `AtlasLoot_BurningCrusade`, `AtlasLoot_WrathoftheLichKing`, etc.); monolithic 8.1+ releases do not.
+- In split-module releases, `AtlasLoot:IsLootTableAvailable(moduleName)` expects the real module addon name, including underscores.
 - Legacy table structure for boss loot is consistent:
 	- top table has `Name` (instance/loot place) and usually `Type`.
 	- nested entries have `Name` (boss/source) and sides with `{ itemID = ... }`.
 - 8.x beta menu structure is:
-	- `menu.Module`, `menu.Name`, `menu.Type`.
+	- `menu.Name`, `menu.Type`, plus `menu.Module` in split-module releases.
 	- numeric menu pages like `{ "Boss Name", { npcOrRefIds... } }`.
 	- direct item tables are keyed as `dataID .. pageIndex` in `AtlasLoot.data.item`.
 	- referenced/drop-rate item tables may also be keyed by numeric NPC/ref id.
@@ -74,6 +78,7 @@ Notes:
 - `itemSources` prevents lossy mapping and handles multi-source duplicates.
 - `itemMeta` stores compact display metadata such as AtlasLoot difficulty labels (`N`, `HC`, `M`, `M+10`, `Asc`).
 - Provider difficulty metadata is provisional display data; once an item tooltip is available, search display should prefer the tooltip-derived item grade to correct stale or misindexed provider records.
+- Search normalizes Ascension's `Item:CreateFromID(...):GetInfoInstant()` result to the legacy `GetItemInfo` tuple when a custom difficulty ID is absent from the WDB cache. The asynchronous warmer queries both item APIs.
 
 ### 2. Provider implementations
 Add provider modules:
@@ -122,11 +127,12 @@ Rationale:
 ### AtlasLoot extraction
 Preparation:
 - If AtlasLoot is installed but not loaded, attempt guarded `LoadAddOn("AtlasLoot")`.
-- Load only enabled expansion modules during cache build.
-- Load all expansion modules when building the raid checklist for the settings UI.
-- Use `AtlasLoot:IsLootTableAvailable("AtlasLoot_OriginalWoW")`, `AtlasLoot:IsLootTableAvailable("AtlasLoot_BurningCrusade")`, and `AtlasLoot:IsLootTableAvailable("AtlasLoot_WrathoftheLichKing")` when available.
+- In split-module releases, load only enabled expansion modules during cache build and all expansion modules when building the raid checklist for the settings UI.
+- In split-module releases, use `AtlasLoot:IsLootTableAvailable("AtlasLoot_OriginalWoW")`, `AtlasLoot:IsLootTableAvailable("AtlasLoot_BurningCrusade")`, and `AtlasLoot:IsLootTableAvailable("AtlasLoot_WrathoftheLichKing")` when available.
+- In monolithic 8.1+ releases, use the already initialized core menu/item data and do not probe obsolete expansion addons.
 - Select the runtime adapter automatically:
 	- prefer `atlasloot_v8` when `AtlasLoot.ui.menus.data` and `AtlasLoot.data.item` are available.
+	- in monolithic 8.1+ data, restrict scanning to the authoritative `DungeonsAndRaids*` collections so collection/PvP menus reusing dungeon or raid difficulty types are not misclassified as instance loot.
 	- fall back to `legacy` when useful `AtlasLoot_Data` tables are available.
 
 Selection filter:
@@ -172,7 +178,7 @@ Refresh triggers:
 - `/is atlas on|off`: enable/disable AtlasLoot provider.
 - `/is atlas classic|tbc|wrath on|off`: expansion filters.
 - Dungeons are always enabled for active expansions.
-- Dungeon AtlasLoot variants are included up to the requested `Dungeon Max Mythic Level` in `Interface -> AddOns -> ItemScore -> Loot Sources`; `0` means base Mythic. The input is not upper-capped, while effective results are naturally limited by AtlasLoot difficulty metadata or missing difficulty IDs.
+- Dungeon AtlasLoot variants are included up to the requested `Dungeon Max Mythic Level` in `Interface -> AddOns -> ItemScore -> Loot Sources`; `0` means base Mythic. The input is not upper-capped, while effective results are naturally limited by AtlasLoot difficulty metadata or missing difficulty IDs. The field is initialized directly from the current character's SavedVariables, refreshes from persisted state unless the player is actively editing a draft, and resets its horizontal text viewport after legacy-client enable-state updates.
 - Raid AtlasLoot variants are included up to `Raid Max Difficulty` (`Normal`, `Heroic`, `Mythic`, `Ascended`) in `Interface -> AddOns -> ItemScore -> Loot Sources`.
 - Raids are individually toggleable in `Interface -> AddOns -> ItemScore -> Loot Sources` (grouped by expansion).
 - `/is atlas raid on|off`: convenience switch for all raids at once.
@@ -201,6 +207,7 @@ Refresh triggers:
 - Search works with only LootCollector enabled.
 - Search works with only AtlasLoot enabled.
 - AtlasLoot Ascension 8.x beta (`Version: 8.0.0`) uses the `atlasloot_v8` adapter and does not depend on populated legacy `AtlasLoot_Data`.
+- AtlasLoot Ascension 8.1 monolithic menus use the `atlasloot_v8` adapter without legacy expansion addons or per-menu `Module` fields.
 - Legacy AtlasLoot data still uses the `legacy` adapter when beta menu/item data is absent.
 - AtlasLoot module loading uses underscore addon names, e.g. `AtlasLoot_OriginalWoW`.
 - AtlasLoot dungeon search includes Heroic, base Mythic, and configured Mythic+ variants when `Dungeon Max Mythic Level` permits them.

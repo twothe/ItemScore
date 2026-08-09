@@ -135,7 +135,7 @@ end
 
 local function resolveSearchItemInfo(itemID, metadata)
 	local primaryRaw = itemRaw(itemID)
-	local name, link, rarity, itemLevel, requiredLevel, itemType, subType, stackCount, invType, icon = GetItemInfo(primaryRaw)
+	local name, link, rarity, itemLevel, requiredLevel, itemType, subType, stackCount, invType, icon = addon.GetItemInfoCompat(primaryRaw)
 	if name then
 		return {
 			raw = primaryRaw,
@@ -159,7 +159,7 @@ local function resolveSearchItemInfo(itemID, metadata)
 	end
 
 	if fallbackRaw and fallbackRaw ~= primaryRaw then
-		name, link, rarity, itemLevel, requiredLevel, itemType, subType, stackCount, invType, icon = GetItemInfo(fallbackRaw)
+		name, link, rarity, itemLevel, requiredLevel, itemType, subType, stackCount, invType, icon = addon.GetItemInfoCompat(fallbackRaw)
 		if name then
 			return {
 				raw = fallbackRaw,
@@ -817,9 +817,9 @@ local function refreshRows(data)
 					if delta < 0 then deltaColor = "|cffff0000" end
 					row.scoreText:SetText(string.format("%.1f %s(%+.1f)|r", rowData.score, deltaColor, delta))
 				end
-				local _, _, rarity = GetItemInfo(rowData.link)
+				local _, _, rarity = addon.GetItemInfoCompat(rowData.link)
 				local color = select(4, GetItemQualityColor(rarity or 1))
-				local itemText = color .. (select(2, GetItemInfo(rowData.raw)) or ("[" .. rowData.name .. "]")) .. "|r"
+				local itemText = color .. (select(2, addon.GetItemInfoCompat(rowData.raw)) or ("[" .. rowData.name .. "]")) .. "|r"
 				row.itemLink:SetText(itemText .. difficultySuffix(rowData.difficultyLabel))
 				row.dungeonText:SetText(rowData.dungeon or "")
 				row.bossText:SetText(rowData.sourceText or "")

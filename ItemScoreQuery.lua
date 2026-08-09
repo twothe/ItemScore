@@ -36,6 +36,13 @@ local queryItemsPerFrame = QUERY_START_ITEMS_PER_FRAME
 
 local function process(id)
 	if not id then return end
+	local itemFactory = _G.Item
+	if type(itemFactory) == "table" and type(itemFactory.CreateFromID) == "function" then
+		local ok, itemObject = pcall(itemFactory.CreateFromID, itemFactory, id)
+		if ok and itemObject and type(itemObject.Query) == "function" then
+			pcall(itemObject.Query, itemObject)
+		end
+	end
 	pcall(hiddenTooltip.SetHyperlink, hiddenTooltip, "item:" .. id .. ":::::::::")
 end
 

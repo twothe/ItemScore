@@ -7,12 +7,22 @@ local U = addon
 local HEADER_HEIGHT = 24
 
 local function setButtonEnabled(btn, enabled)
-    if btn.SetEnabled then
-        btn:SetEnabled(enabled)
-    else
-        if enabled then btn:Enable() else btn:Disable() end
-    end
+	if btn.SetEnabled then
+		btn:SetEnabled(enabled)
+	else
+		if enabled then btn:Enable() else btn:Disable() end
+	end
 end
+
+-- Programmatic SetText calls can retain a stale horizontal viewport on this
+-- legacy client. Resetting the cursor exposes the beginning of the value.
+local function setEditBoxText(editBox, value)
+	editBox:SetText(value)
+	if editBox.SetCursorPosition then
+		editBox:SetCursorPosition(0)
+	end
+end
+
 local HEADER_Y_GAP = 4
 local STAT_FIELD_HEIGHT = 24
 local STATS_LEFT_PAD = 16
@@ -181,7 +191,7 @@ function ProfileComponent:buildStats()
 			edit:SetScript("OnTextChanged", function(box) if box:IsVisible() and box:HasFocus() then addon.SetWeight(self.profileName, key, tonumber(box:GetText())) end end)
 			edit:SetScript("OnShow", function(box)
 				local current = box:GetText()
-				box:SetText(current)
+				setEditBoxText(box, current)
 			end)
 
 			local lbl = container:CreateFontString(nil, "OVERLAY", "GameFontNormal")
@@ -296,9 +306,9 @@ function ProfileComponent:buildStats()
 	for _, field in ipairs(self.fields) do
 		local v = self.profileData and self.profileData.weights[field.statKey]
 		if v then
-			field.edit:SetText(tostring(v))
+			setEditBoxText(field.edit, tostring(v))
 		else
-			field.edit:SetText("")
+			setEditBoxText(field.edit, "")
 		end
 		field.edit:ClearFocus()
 	end
@@ -333,8 +343,7 @@ function ProfileComponent:refresh()
 		for _, field in ipairs(self.fields) do
 			local v = self.profileData.weights[field.statKey]
 			local txt = v and tostring(v) or ""
-            field.edit:SetText(txt)
-            field.edit:SetCursorPosition(0)
+			setEditBoxText(field.edit, txt)
 			field.edit:ClearFocus()
 		end
 		local armorFilter = self.profileData.armorTypeFilter or {}
@@ -390,33 +399,42 @@ scrollChild:SetWidth(580)
 scroll:SetScrollChild(scrollChild)
 
 ScorePanel.components = {}
+ScorePanel.componentPool = {}
 ScorePanel.refreshing = false
 ScorePanel.pendingRefresh = false
-
-function ScorePanel:clear()
-	for _, comp in pairs(self.components) do comp.root:Hide() end
-	self.components = {}
-end
 
 function ScorePanel:refreshAll()
 	if self.refreshing then return end
 	self.refreshing = true
-	self:clear()
+
+	local activeComponents = {}
 	local ordered = addon.GetProfiles()
-    for index, name in ipairs(ordered) do
-		local comp = ProfileComponent:Create(scrollChild, name, self)
-		comp.parent = self
-		self.components[name] = comp
+	for _, name in ipairs(ordered) do
+		local comp = self.componentPool[name]
+		if comp then
+			comp:refresh()
+		else
+			comp = ProfileComponent:Create(scrollChild, name, self)
+			self.componentPool[name] = comp
+		end
+		comp.root:Show()
+		activeComponents[name] = comp
 	end
+	for name, comp in pairs(self.componentPool) do
+		if not activeComponents[name] then
+			comp.root:Hide()
+		end
+	end
+	self.components = activeComponents
 	self:layout()
 	self.refreshing = false
 end
 
-local function forceTextRefresh(panel)
+local function refreshEditBoxViewports(panel)
 	for _, comp in pairs(panel.components) do
 		for _, field in ipairs(comp.fields or {}) do
 			local txt = field.edit:GetText()
-			field.edit:SetText(txt)
+			setEditBoxText(field.edit, txt)
 		end
 	end
 end
@@ -432,7 +450,7 @@ function ScorePanel:layout()
 	end
 	scrollChild:SetHeight(-y)
 	scroll:UpdateScrollChildRect()
-	forceTextRefresh(self)
+	refreshEditBoxViewports(self)
 end
 
 ScorePanel:SetScript("OnShow", function(self)
@@ -580,6 +598,41 @@ local function normalizeDungeonMaxMythicLevelInput(value, allowBlank)
 	return numeric
 end
 
+-- Synchronizes the persisted cap unless the player is actively editing a draft.
+-- A newly created edit box can briefly own focus before SetAutoFocus(false)
+-- takes effect, which must not suppress its initial SavedVariables value.
+local function syncDungeonMaxMythicLevelField(panel, settings, force)
+	if not panel or not panel.dungeonMaxMythicEdit then return false end
+	if not force and panel.dungeonMaxMythicEdit:HasFocus() and panel.dungeonMaxMythicDirty then
+		return false
+	end
+
+	local value = normalizeDungeonMaxMythicLevelInput(settings and settings.atlasDungeonMaxMythicLevel)
+	panel.dungeonMaxMythicSyncing = true
+	setEditBoxText(panel.dungeonMaxMythicEdit, tostring(value))
+	panel.dungeonMaxMythicSyncing = false
+	panel.dungeonMaxMythicValueLoaded = true
+	panel.dungeonMaxMythicDirty = false
+	return true
+end
+
+-- Restores the text viewport after enable-state changes. The value can remain
+-- intact while its horizontal scroll position leaves every digit off-screen.
+local function refreshDungeonMaxMythicLevelAppearance(panel, enabled)
+	if not panel or not panel.dungeonMaxMythicEdit then return end
+
+	local editBox = panel.dungeonMaxMythicEdit
+	local currentText = editBox:GetText()
+	local wasSyncing = panel.dungeonMaxMythicSyncing
+	panel.dungeonMaxMythicSyncing = true
+	setEditBoxText(editBox, currentText)
+	panel.dungeonMaxMythicSyncing = wasSyncing
+	if editBox.SetTextColor then
+		local color = enabled and 1 or 0.5
+		editBox:SetTextColor(color, color, color, 1)
+	end
+end
+
 local function commitDungeonMaxMythicLevel(panel, skipPanelRefresh, skipRefreshQueue)
 	if not panel or not panel.dungeonMaxMythicEdit then return end
 	if not panel.dungeonMaxMythicValueLoaded and not panel.dungeonMaxMythicDirty and not panel.dungeonMaxMythicEdit:HasFocus() then
@@ -588,16 +641,13 @@ local function commitDungeonMaxMythicLevel(panel, skipPanelRefresh, skipRefreshQ
 	local value = normalizeDungeonMaxMythicLevelInput(panel.dungeonMaxMythicEdit:GetText(), true)
 	if value == nil then
 		local settings = getSourceSettings()
-		value = normalizeDungeonMaxMythicLevelInput(settings.atlasDungeonMaxMythicLevel)
-		panel.dungeonMaxMythicEdit:SetText(tostring(value))
-		panel.dungeonMaxMythicValueLoaded = true
-		panel.dungeonMaxMythicDirty = false
+		syncDungeonMaxMythicLevelField(panel, settings, true)
 		if not skipPanelRefresh then
 			refreshSourcesPanel(panel)
 		end
 		return
 	end
-	panel.dungeonMaxMythicEdit:SetText(tostring(value))
+	setEditBoxText(panel.dungeonMaxMythicEdit, tostring(value))
 	panel.dungeonMaxMythicValueLoaded = true
 	panel.dungeonMaxMythicDirty = false
 	setSourceOption("atlasDungeonMaxMythicLevel", value, skipRefreshQueue)
@@ -721,13 +771,8 @@ refreshSourcesPanel = function(panel)
 	setCheckIfExists(panel.atlasTBC, settings.atlasTBC)
 	setCheckIfExists(panel.atlasWrath, settings.atlasWrath)
 	if panel.dungeonMaxMythicEdit then
-		local dungeonMaxLevel = normalizeDungeonMaxMythicLevelInput(settings.atlasDungeonMaxMythicLevel)
 		local availableMaxLevel = getAtlasDungeonMaxMythicLevel()
-		if not panel.dungeonMaxMythicEdit:HasFocus() then
-			panel.dungeonMaxMythicEdit:SetText(tostring(dungeonMaxLevel))
-			panel.dungeonMaxMythicValueLoaded = true
-			panel.dungeonMaxMythicDirty = false
-		end
+		syncDungeonMaxMythicLevelField(panel, settings, false)
 		if panel.dungeonMaxMythicHint then
 			panel.dungeonMaxMythicHint:SetText("0 = Mythic, AtlasLoot max " .. tostring(availableMaxLevel))
 		end
@@ -749,6 +794,7 @@ refreshSourcesPanel = function(panel)
 	setButtonEnabled(panel.enableAllRaidsBtn, atlasEnabled)
 	setButtonEnabled(panel.disableAllRaidsBtn, atlasEnabled)
 	setButtonEnabled(panel.dungeonMaxMythicEdit, atlasEnabled)
+	refreshDungeonMaxMythicLevelAppearance(panel, atlasEnabled)
 	if panel.raidMaxDifficultyDrop then
 		if atlasEnabled and type(UIDropDownMenu_EnableDropDown) == "function" then
 			UIDropDownMenu_EnableDropDown(panel.raidMaxDifficultyDrop)
@@ -873,12 +919,13 @@ SourcesPanel:SetScript("OnShow", function(self)
 		self.dungeonMaxMythicEdit = U.CreateEditBox(self, 44)
 		self.dungeonMaxMythicEdit:SetPoint("LEFT", self.dungeonMaxMythicLabel, "RIGHT", 10, 0)
 		self.dungeonMaxMythicEdit:SetNumeric(true)
-		self.dungeonMaxMythicEdit:SetText("0")
+		syncDungeonMaxMythicLevelField(self, getSourceSettings(), true)
+		self.dungeonMaxMythicEdit:ClearFocus()
 		self.dungeonMaxMythicEdit:SetScript("OnEnterPressed", function(box)
 			box:ClearFocus()
 		end)
 		self.dungeonMaxMythicEdit:SetScript("OnTextChanged", function(box)
-			if box:IsVisible() and box:HasFocus() then
+			if not self.dungeonMaxMythicSyncing and box:IsVisible() and box:HasFocus() then
 				saveDungeonMaxMythicLevelDraft(self, box:GetText())
 			end
 		end)

@@ -10,6 +10,7 @@
 - Holy, Fire, Nature, Frost, Shadow, and Arcane resistance weights must be independently configurable via `RESISTANCE1_NAME` through `RESISTANCE6_NAME`.
 - Changing a profile stat weight must invalidate equipped-score caches before the next delta/upgrade calculation.
 - Deleting and recreating a profile name must not reuse stale equipped scores from the deleted profile.
+- Reopening the Scores configuration must reuse existing profile components and must not create another permanent set of edit boxes.
 
 ## Search data providers
 - ItemScore only (no LootCollector, no AtlasLoot): search opens and shows deterministic "no data source available" state without Lua errors.
@@ -19,6 +20,11 @@
 - LootCollector V8 fallback: if accessors are unavailable but `LootCollectorDB_Asc.global.realms[realmKey]` is loaded, ItemScore reads the current realm bucket read-only.
 - AtlasLoot only: dungeon/raid loot entries are searchable by instance and boss/source.
 - AtlasLoot adapter detection: Ascension 8.x beta data (`AtlasLoot.ui.menus.data` + `AtlasLoot.data.item`) must use the `atlasloot_v8` adapter even when global `AtlasLoot_Data` contains only compatibility data.
+- AtlasLoot 8.1 monolithic adapter: menus without `Module` fields must be assigned through `ui.menus.collection.DungeonsAndRaidsCLASSIC/TBC/WRATH`; similarly typed collection/PvP menus outside those groups must not be collected.
+- AtlasLoot 8.1 difficulty metadata: dungeon Mythic+ limits must use `AtlasLoot.Difficulties:GetMax(typeName)` when direct difficulty tables are absent.
+- AtlasLoot 8.1 Mythic+ boundary: with dungeon cap `10`, Starfire Tiara (`12604`) from Upper Blackrock Spire must collect difficulty ID `1063323` as `M+10`/rank `15`, not stop at M+8 (`1050197`).
+- AtlasLoot 8.1 live-client object resolution: the automatically created `_G.AtlasLoot` UI frame must be rejected in favor of the AceAddon object, otherwise raid choices and item data appear empty.
+- AtlasLoot live-client LibStub resolution: a table-valued callable `LibStub` with `GetLibrary` must resolve `AceAddon-3.0`; tests must not model LibStub only as a plain Lua function.
 - AtlasLoot adapter fallback: legacy `AtlasLoot_Data` tables must still be collected when beta menu/item data is absent.
 - AtlasLoot module loading must call real load-on-demand addon names with underscores, e.g. `AtlasLoot_OriginalWoW`.
 - AtlasLoot 8.x beta collection must read direct item tables keyed by `dataID .. pageIndex` and referenced tables keyed by NPC/ref id.
@@ -27,6 +33,7 @@
 - AtlasLoot dungeon difficulty limit: default `Dungeon Max Mythic Level = 0` includes Heroic and base Mythic variants; raising the value includes Mythic+ item IDs up to the AtlasLoot-supported maximum.
 - AtlasLoot dungeon difficulty input must preserve user values above the currently supported maximum; effective results are naturally capped by AtlasLoot difficulty metadata or missing difficulty IDs.
 - AtlasLoot dungeon difficulty input persists per character across reload/restart; setting one character to `15` must not force another character to use `15`.
+- Regression: on the first opening of Loot Sources after `/reload`, `Dungeon Max Mythic Level` must visibly render the persisted per-character value even if the newly created edit box briefly receives focus or its later enable-state update moves the horizontal text viewport past the value.
 - Regression: closing `Interface -> AddOns -> ItemScore -> Loot Sources` with a blank or not-yet-loaded `Dungeon Max Mythic Level` field must not overwrite an existing per-character value with `0`.
 - AtlasLoot raid difficulty limit: `Normal`, `Heroic`, `Mythic`, and `Ascended` include only variants at or below the selected maximum.
 - AtlasLoot search row display must show item grade next to the item link when known, e.g. `[Wildfire Cape] (M+10)`, `[Item] (Asc)`.
@@ -61,6 +68,7 @@
 - Regression: running search repeatedly (e.g. `Weapons` slot) must not enter an endless auto-search loop when some itemIDs never resolve via `GetItemInfo`.
 - Regression: while `Fetching...` is active, a re-entrant follow-up search that queues additional item queries must not leave the search button permanently disabled.
 - Regression: item-info fetching must stay per-frame/adaptive; it should increase throughput when cheap, reduce throughput when frames are expensive, and never process an unbounded queue in one frame.
+- Ascension custom item API: when legacy `GetItemInfo` returns nil for an AtlasLoot difficulty ID, `Item:CreateFromID(id):GetInfoInstant()` must provide normalized name, link, quality, levels, class/subclass, icon, and `INVTYPE_*`; the async warmer must call `Item:Query()` as well as the legacy tooltip path.
 - Regression: if `Fetching...` exceeds the bounded query timeout (e.g. loading-screen/zone transfer during query), query state must auto-reset, button must become usable again, and a new search must run normally.
 - Regression: clicking `Refresh Cache Now` in options triggers only one immediate rebuild (or queues one retry only when current rebuild is busy), never two unconditional rebuilds.
 - Regression: LootCollector provider must respect per-frame `maxOps` budget even when many vendor records contain zero items.
