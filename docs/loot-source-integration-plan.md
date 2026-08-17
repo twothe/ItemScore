@@ -181,6 +181,7 @@ Refresh triggers:
 - Dungeon AtlasLoot variants are included up to the requested `Dungeon Max Mythic Level` in `Interface -> AddOns -> ItemScore -> Loot Sources`; `0` means base Mythic. The input is not upper-capped, while effective results are naturally limited by AtlasLoot difficulty metadata or missing difficulty IDs. The field is initialized directly from the current character's SavedVariables, refreshes from persisted state unless the player is actively editing a draft, and resets its horizontal text viewport after legacy-client enable-state updates.
 - Raid AtlasLoot variants are included up to `Raid Max Difficulty` (`Normal`, `Heroic`, `Mythic`, `Ascended`) in `Interface -> AddOns -> ItemScore -> Loot Sources`.
 - Raids are individually toggleable in `Interface -> AddOns -> ItemScore -> Loot Sources` (grouped by expansion).
+- `The Karazhan Crypts` is treated as a raid even though AtlasLoot labels its Classic copy as `ClassicDungeonExt` and uses the custom `BCkarazhanCrypts` type for its TBC copy. Both copies therefore follow raid difficulty and per-raid enablement controls.
 - `/is atlas raid on|off`: convenience switch for all raids at once.
 - `/is atlas place on <Area Name>` / `/is atlas place off <Area Name>`: per-area toggle for locked/unavailable content.
 - `/is atlas place list`: inspect disabled areas.

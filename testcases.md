@@ -39,6 +39,7 @@
 - AtlasLoot search row display must show item grade next to the item link when known, e.g. `[Wildfire Cape] (M+10)`, `[Item] (Asc)`.
 - AtlasLoot search row display must prefer tooltip-derived item grade over provider metadata once the item tooltip is available, e.g. a cache-misindexed M+40 item must not stay labeled `M+3`.
 - AtlasLoot raids are individually toggleable in `Interface -> AddOns -> ItemScore -> Loot Sources`, grouped by expansion.
+- AtlasLoot Karazhan Crypts regression: both the Classic `ClassicDungeonExt` entry and the TBC `BCkarazhanCrypts` entry for `The Karazhan Crypts` must appear in the raid checklist, use the raid difficulty limit, and be excluded from collection when that raid is disabled.
 - Search max-level filter (from search window): with `Max Required Level = 38`, results must exclude items requiring level 39+.
 - Search max-level filter updates must not trigger a full cache rebuild; only search results should change.
 - Search max-level input must keep proper focus behavior (cursor should stop blinking after clicking other search controls/background).

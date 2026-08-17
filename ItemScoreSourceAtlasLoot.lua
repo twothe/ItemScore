@@ -19,14 +19,20 @@ local DUNGEON_TYPES = {
 	ClassicDungeon = true,
 	ClassicDungeonExt = true,
 	BCDungeon = true,
-	BCkarazhanCrypts = true,
 	WrathDungeon = true,
 }
 
 local RAID_TYPES = {
 	ClassicRaid = true,
+	BCkarazhanCrypts = true,
 	BCRaid = true,
 	WrathRaid = true,
+}
+
+-- AtlasLoot exposes the Classic copy of this raid as ClassicDungeonExt.
+-- Keep the instance override centralized so collection and configuration agree.
+local RAID_PLACES = {
+	["The Karazhan Crypts"] = true,
 }
 
 local DIFFICULTY_BY_NAME = {
@@ -256,7 +262,8 @@ local function ensureExpansionModulesLoaded(atlasLoot, settings, includeAllExpan
 	end
 end
 
-local function lootTypeFlags(typeName)
+local function lootTypeFlags(typeName, placeName)
+	if RAID_PLACES[placeName] then return false, true end
 	local lootType = tostring(typeName or "")
 	local hasDungeon = DUNGEON_TYPES[lootType] or string.find(lootType, "Dungeon", 1, true) ~= nil
 	local hasRaid = RAID_TYPES[lootType] or string.find(lootType, "Raid", 1, true) ~= nil
@@ -523,8 +530,8 @@ local function buildBetaCollectSources(atlasLoot, settings)
 				meta.scannedMenus = meta.scannedMenus + 1
 			end
 			if moduleMeta and expansionEnabled(moduleMeta.key, settings) then
-				local hasDungeon, hasRaid = lootTypeFlags(lootMenu.Type)
 				local placeName = clean(lootMenu.Name) or clean(dataID) or "Unknown Place"
+				local hasDungeon, hasRaid = lootTypeFlags(lootMenu.Type, placeName)
 				if (hasDungeon or hasRaid) and sourceAllowed(placeName, hasDungeon, hasRaid, settings) then
 					for pageIndex, menuEntry in ipairs(lootMenu) do
 						if type(menuEntry) == "table" then
@@ -578,8 +585,8 @@ local function buildLegacyCollectSources(atlasData, settings)
 				meta.scannedMenus = meta.scannedMenus + 1
 			end
 			if moduleMeta and expansionEnabled(moduleMeta.key, settings) then
-				local hasDungeon, hasRaid = lootTypeFlags(lootTable.Type)
 				local placeName = clean(lootTable.Name) or clean(dataID) or "Unknown Place"
+				local hasDungeon, hasRaid = lootTypeFlags(lootTable.Type, placeName)
 				if (hasDungeon or hasRaid) and sourceAllowed(placeName, hasDungeon, hasRaid, settings) then
 					for _, sourceTable in pairs(lootTable) do
 						if type(sourceTable) == "table" and sourceTable.Name then
@@ -638,9 +645,9 @@ local function buildBetaRaidChoices(atlasLoot)
 		if type(lootMenu) == "table" then
 			local moduleMeta = betaExpansionMeta(lootMenu, dataID, expansionByDataID, hasExpansionCollections)
 			if moduleMeta then
-				local _, hasRaid = lootTypeFlags(lootMenu.Type)
+				local placeName = clean(lootMenu.Name) or clean(dataID)
+				local _, hasRaid = lootTypeFlags(lootMenu.Type, placeName)
 				if hasRaid then
-					local placeName = clean(lootMenu.Name) or clean(dataID)
 					if placeName then
 						byExpansion[moduleMeta.key][placeName] = true
 					end
@@ -658,9 +665,9 @@ local function buildLegacyRaidChoices(atlasData)
 		if type(lootTable) == "table" then
 			local moduleMeta = MODULE_EXPANSIONS[lootTable.Module]
 			if moduleMeta then
-				local _, hasRaid = lootTypeFlags(lootTable.Type)
+				local placeName = clean(lootTable.Name) or clean(dataID)
+				local _, hasRaid = lootTypeFlags(lootTable.Type, placeName)
 				if hasRaid then
-					local placeName = clean(lootTable.Name) or clean(dataID)
 					if placeName then
 						byExpansion[moduleMeta.key][placeName] = true
 					end
