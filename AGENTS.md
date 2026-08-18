@@ -10,6 +10,7 @@
 - Keep background work schedulers single-shot (avoid combining immediate and queued refresh triggers for the same action).
 - Bump `## Version:` in `ItemScore.toc` whenever addon code changes are made for release.
 - Treat AtlasLoot dungeon/raid difficulty limits as cache-time filters because they change collected item IDs.
+- Keep AtlasLoot dungeon results on the highest resolvable variant per source row by default; the per-character option may restore all variants through the configured Mythic+ cap.
 - Store the user's requested Mythic+ cap without an upper input clamp; provider metadata or missing difficulty IDs define the effective collected maximum.
 - Initialize focus-sensitive loot-source fields from per-character SavedVariables before installing edit handlers; preserve only drafts that were actually edited, and reset the horizontal text viewport after programmatic text, enable, or layout transitions.
 - Reuse profile option components across panel refreshes; WoW frames cannot be destroyed, so recreating the complete options tree on every show leaks hidden UI objects.

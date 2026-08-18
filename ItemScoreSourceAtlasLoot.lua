@@ -204,6 +204,7 @@ local function normalizeSettings(settings)
 		atlasTBC = settings.atlasTBC and true or false,
 		atlasWrath = settings.atlasWrath and true or false,
 		atlasDungeonMaxMythicLevel = normalizeDungeonMaxMythicLevel(settings.atlasDungeonMaxMythicLevel),
+		atlasDungeonHighestMythicOnly = settings.atlasDungeonHighestMythicOnly ~= false,
 		atlasRaidMaxDifficulty = normalizeRaidMaxDifficulty(settings.atlasRaidMaxDifficulty),
 		atlasDisabledPlaces = type(settings.atlasDisabledPlaces) == "table" and settings.atlasDisabledPlaces or {},
 		atlasDisabledRaids = type(settings.atlasDisabledRaids) == "table" and settings.atlasDisabledRaids or {},
@@ -452,7 +453,7 @@ local function resolveDifficultyItemID(state, itemID, difficulty, allowOriginalF
 	return nil
 end
 
--- Adds all configured AtlasLoot difficulty variants for one source row.
+-- Adds configured AtlasLoot variants for one source row, optionally retaining only the highest dungeon result.
 local function addDifficultyMappings(state, addMapping, itemRow, itemID)
 	local sourceMeta = state.currentSource
 	if sourceMeta.isFaction or sourceMeta.isCrafting then
@@ -463,20 +464,30 @@ local function addDifficultyMappings(state, addMapping, itemRow, itemID)
 	local minDifficulty, maxDifficulty = itemDifficultyBounds(state, sourceMeta, itemRow)
 	if not minDifficulty then return 0 end
 
-	local added = 0
 	local seen = {}
-	for difficulty = minDifficulty, maxDifficulty do
+	local function addDifficulty(difficulty)
 		local allowOriginalFallback = itemRow.minDifficulty ~= nil and difficulty == minDifficulty
 		local difficultyItemID = resolveDifficultyItemID(state, itemID, difficulty, allowOriginalFallback)
-		if difficultyItemID and not seen[difficultyItemID] then
-			seen[difficultyItemID] = true
-			addMapping(sourceMeta.placeName, sourceMeta.sourceName, difficultyItemID, {
-				difficultyLabel = difficultyDisplayLabel(sourceMeta, difficulty),
-				difficultyRank = difficulty,
-				ignoreClassRestriction = sourceMeta.ignoreClassRestriction,
-			})
-			added = added + 1
+		if not difficultyItemID or seen[difficultyItemID] then return false end
+		seen[difficultyItemID] = true
+		addMapping(sourceMeta.placeName, sourceMeta.sourceName, difficultyItemID, {
+			difficultyLabel = difficultyDisplayLabel(sourceMeta, difficulty),
+			difficultyRank = difficulty,
+			ignoreClassRestriction = sourceMeta.ignoreClassRestriction,
+		})
+		return true
+	end
+
+	if sourceMeta.isDungeon and state.settings.atlasDungeonHighestMythicOnly then
+		for difficulty = maxDifficulty, minDifficulty, -1 do
+			if addDifficulty(difficulty) then return 1 end
 		end
+		return 0
+	end
+
+	local added = 0
+	for difficulty = minDifficulty, maxDifficulty do
+		if addDifficulty(difficulty) then added = added + 1 end
 	end
 	return added
 end

@@ -30,7 +30,12 @@
 - AtlasLoot 8.x beta collection must read direct item tables keyed by `dataID .. pageIndex` and referenced tables keyed by NPC/ref id.
 - AtlasLoot expansion filters (`classic/tbc/wrath`) immediately change cache contents after refresh.
 - AtlasLoot dungeons are always included for enabled expansions and cannot be disabled independently.
-- AtlasLoot dungeon difficulty limit: default `Dungeon Max Mythic Level = 0` includes Heroic and base Mythic variants; raising the value includes Mythic+ item IDs up to the AtlasLoot-supported maximum.
+- AtlasLoot dungeon difficulty limit: with all-variants mode active, `Dungeon Max Mythic Level = 0` includes Heroic and base Mythic variants; raising the value includes Mythic+ item IDs up to the AtlasLoot-supported maximum.
+- AtlasLoot highest-only default: a new or migrated character must default `Only highest Mythic+ variant` to enabled; with cap `10`, an item resolvable through M+10 must contribute only its M+10 item ID and metadata.
+- AtlasLoot highest-only fallback: if the configured cap variant does not resolve for one dungeon row, collection must descend and use only the highest resolvable variant for that row.
+- AtlasLoot all-variants mode: disabling `Only highest Mythic+ variant` must restore all resolvable dungeon variants from the row minimum through the configured cap.
+- AtlasLoot variant-mode isolation: the highest-only option must not change raid, Tier Set, reputation, or crafting collection behavior.
+- AtlasLoot variant-mode cache: changing the highest-only option must invalidate the source-settings fingerprint so search cannot reuse a catalog built for the other mode.
 - AtlasLoot dungeon difficulty input must preserve user values above the currently supported maximum; effective results are naturally capped by AtlasLoot difficulty metadata or missing difficulty IDs.
 - AtlasLoot dungeon difficulty input persists per character across reload/restart; setting one character to `15` must not force another character to use `15`.
 - Regression: on the first opening of Loot Sources after `/reload`, `Dungeon Max Mythic Level` must visibly render the persisted per-character value even if the newly created edit box briefly receives focus or its later enable-state update moves the horizontal text viewport past the value.

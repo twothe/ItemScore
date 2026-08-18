@@ -16,7 +16,7 @@
 - `LootCollector`
 - `AtlasLoot`
 
-You can configure which providers to use. AtlasLoot search data supports both legacy AtlasLoot data and the Ascension 8.x beta layout, configurable dungeon and raid difficulty limits, and expansion-grouped selection of raids, Classic Tier 1-3 sets, loaded reputation rewards, and loaded crafting professions in `/itemscore` -> `Loot Sources`. LootCollector Worldforged filters cover ZG/MC/BWL/Naxxramas inclusively from ZG through the highest selected tier, and unresolved tier IDs fall back to the original LootCollector Worldforged discovery while the client item cache catches up.
+You can configure which providers to use. AtlasLoot search data supports both legacy AtlasLoot data and the Ascension 8.x beta layout, configurable dungeon and raid difficulty limits, a default highest-only Mythic+ result mode, and expansion-grouped selection of raids, Classic Tier 1-3 sets, loaded reputation rewards, and loaded crafting professions in `/itemscore` -> `Loot Sources`. LootCollector Worldforged filters cover ZG/MC/BWL/Naxxramas inclusively from ZG through the highest selected tier, and unresolved tier IDs fall back to the original LootCollector Worldforged discovery while the client item cache catches up.
 
 ## Installation
 1. Download the ZIP from [Releases](https://github.com/twothe/ItemScore/releases/latest).

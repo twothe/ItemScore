@@ -179,6 +179,7 @@ Refresh triggers:
 - `/is atlas classic|tbc|wrath on|off`: expansion filters.
 - Dungeons are always enabled for active expansions.
 - Dungeon AtlasLoot variants are included up to the requested `Dungeon Max Mythic Level` in `Interface -> AddOns -> ItemScore -> Loot Sources`; `0` means base Mythic. The input is not upper-capped, while effective results are naturally limited by AtlasLoot difficulty metadata or missing difficulty IDs. The field is initialized directly from the current character's SavedVariables, refreshes from persisted state unless the player is actively editing a draft, and resets its horizontal text viewport after legacy-client enable-state updates.
+- `Only highest Mythic+ variant` is enabled by default. For every dungeon source row, ItemScore searches downward from the configured cap and collects only the highest item variant AtlasLoot can resolve. Disabling it restores the previous behavior and collects every resolvable variant through the cap. The option is per character and part of the cache fingerprint.
 - Raid AtlasLoot variants are included up to `Raid Max Difficulty` (`Normal`, `Heroic`, `Mythic`, `Ascended`) in `Interface -> AddOns -> ItemScore -> Loot Sources`.
 - Raids are individually toggleable in `Interface -> AddOns -> ItemScore -> Loot Sources` (grouped by expansion).
 - `The Karazhan Crypts` is treated as a raid even though AtlasLoot labels its Classic copy as `ClassicDungeonExt` and uses the custom `BCkarazhanCrypts` type for its TBC copy. Both copies therefore follow raid difficulty and per-raid enablement controls.
@@ -217,7 +218,7 @@ Refresh triggers:
 - AtlasLoot Ascension 8.1 monolithic menus use the `atlasloot_v8` adapter without legacy expansion addons or per-menu `Module` fields.
 - Legacy AtlasLoot data still uses the `legacy` adapter when beta menu/item data is absent.
 - AtlasLoot module loading uses underscore addon names, e.g. `AtlasLoot_OriginalWoW`.
-- AtlasLoot dungeon search includes Heroic, base Mythic, and configured Mythic+ variants when `Dungeon Max Mythic Level` permits them.
+- AtlasLoot dungeon search keeps the highest permitted resolvable variant by default; disabling `Only highest Mythic+ variant` includes every Heroic, base Mythic, and configured Mythic+ variant permitted by `Dungeon Max Mythic Level`.
 - Search must not use a source cache built for older loot-source settings; changed settings require a rebuild before results are shown.
 - AtlasLoot raid search includes Normal/Heroic/Mythic/Ascended variants only up to `Raid Max Difficulty`.
 - Search rows show known AtlasLoot item grades directly beside the item link, e.g. `[Wildfire Cape] (M+10)`.
