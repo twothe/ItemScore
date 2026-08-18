@@ -25,6 +25,10 @@
 - Keep search usable when custom item IDs never resolve through `GetItemInfo`; unresolved IDs must be bounded by retry/timeout behavior.
 - Keep item-info fetching adaptive per frame so the addon maximizes throughput without unbounded frame spikes.
 - Prefer item-tooltip difficulty labels over provider-derived AtlasLoot labels once tooltip data is available.
+- Treat AtlasLoot Classic Tier 1-3 collection tables as raid-style sources; their items may skip tooltip class restrictions in search, but must still satisfy profile and native armor restrictions.
+- Treat AtlasLoot `FactionsCLASSIC`, `FactionsTBC`, and `FactionsWRATH` collections as expansion-owned reputation sources, but expose and collect a faction only when its item rows are actually loaded.
+- Treat AtlasLoot `CraftingCLASSIC`, `CraftingTBC`, and `CraftingWRATH` collections as expansion-owned crafting sources. Resolve recipe `spellID` rows through `AtlasLoot:GetCraftedItemID`, keep profession toggles expansion-local, and expose only sources with loaded item rows.
+- Keep the Loot Sources options panel in fixed visual groups and render long AtlasLoot source selections through a bounded `FauxScrollFrame` row pool; dynamic source counts must never extend controls outside the list viewport.
 
 ## 2. Project Overview
 - `ItemScore` is a Lua WoW addon for a private WotLK 3.3.5a server.

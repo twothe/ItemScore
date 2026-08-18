@@ -424,20 +424,24 @@ local function normalizedEquipArmorKey(itemType, subType, equipLoc)
 	return addon.NormalizeArmorType(itemType, subType)
 end
 
-function addon.CanPlayerEquip(itemLink)
+-- Checks tooltip class restrictions and native armor eligibility. Callers may
+-- skip only the tooltip class restriction for explicitly class-agnostic sources.
+function addon.CanPlayerEquip(itemLink, options)
 	local name, _, _, _, reqLevel, itemType, subType, _, equipLoc = addon.GetItemInfoCompat(itemLink)
 	if not name or equipLoc == "" then return false end
 
-	classCheckTip:ClearLines()
-	classCheckTip:SetHyperlink(itemLink)
 	local pLoc, pKey = UnitClass("player")
-	local localizedClassesLabel = tostring(_G.ITEM_CLASSES_ALLOWED or "Classes")
-	localizedClassesLabel = string.gsub(localizedClassesLabel, "%s*:%s*$", "")
-	local classesPattern = "^" .. escapeLuaPattern(localizedClassesLabel) .. ":?%s*(.+)"
-	for i = 2, classCheckTip:NumLines() do
-		local txt = _G["IS_ClassCheckTipTextLeft" .. i]:GetText()
-		local list = txt and txt:match(classesPattern)
-		if list and not classListContains(list, pLoc) then return false end
+	if not (type(options) == "table" and options.ignoreClassRestriction) then
+		classCheckTip:ClearLines()
+		classCheckTip:SetHyperlink(itemLink)
+		local localizedClassesLabel = tostring(_G.ITEM_CLASSES_ALLOWED or "Classes")
+		localizedClassesLabel = string.gsub(localizedClassesLabel, "%s*:%s*$", "")
+		local classesPattern = "^" .. escapeLuaPattern(localizedClassesLabel) .. ":?%s*(.+)"
+		for i = 2, classCheckTip:NumLines() do
+			local txt = _G["IS_ClassCheckTipTextLeft" .. i]:GetText()
+			local list = txt and txt:match(classesPattern)
+			if list and not classListContains(list, pLoc) then return false end
+		end
 	end
 
 	local armorKey = normalizedEquipArmorKey(itemType, subType, equipLoc)

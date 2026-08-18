@@ -39,7 +39,22 @@
 - AtlasLoot search row display must show item grade next to the item link when known, e.g. `[Wildfire Cape] (M+10)`, `[Item] (Asc)`.
 - AtlasLoot search row display must prefer tooltip-derived item grade over provider metadata once the item tooltip is available, e.g. a cache-misindexed M+40 item must not stay labeled `M+3`.
 - AtlasLoot raids are individually toggleable in `Interface -> AddOns -> ItemScore -> Loot Sources`, grouped by expansion.
-- AtlasLoot Karazhan Crypts regression: both the Classic `ClassicDungeonExt` entry and the TBC `BCkarazhanCrypts` entry for `The Karazhan Crypts` must appear in the raid checklist, use the raid difficulty limit, and be excluded from collection when that raid is disabled.
+- AtlasLoot Karazhan Crypts regression: both the Classic `ClassicDungeonExt` entry and the TBC `BCkarazhanCrypts` entry for `The Karazhan Crypts` must appear under the expansion-grouped raid sources, use the raid difficulty limit, and be excluded from collection when that raid is disabled.
+- AtlasLoot Classic tier-set collections: only `TONE`, `TTWO`, and `TTHREE` from `CollectionsCLASSIC` must be added to the monolithic adapter as `Tier 1`, `Tier 2`, and `Tier 3`; unrelated collection tables must remain excluded.
+- AtlasLoot Classic tier-set controls: Tier 1-3 must appear in the Classic `Tier Sets` source section, follow the raid difficulty limit, and be excluded from collection when their raid-style checkbox is disabled.
+- AtlasLoot Classic tier-set eligibility: collected Tier 1-3 items must bypass tooltip class restrictions in search, while the profile armor-type filter and the player's native armor eligibility remain active.
+- AtlasLoot reputation source ownership: entries from `FactionsCLASSIC`, `FactionsTBC`, and `FactionsWRATH` must appear only in the matching expansion's `Reputation` section.
+- AtlasLoot reputation source availability: a faction whose menu exists but whose item tables are not loaded must not expose an empty checkbox or contribute cache entries.
+- AtlasLoot reputation source controls: disabling one faction must remove only that faction's reward items after cache refresh; expansion and unrelated source selections remain unchanged.
+- AtlasLoot reputation item mapping: rewards must retain their direct AtlasLoot item IDs and reputation-rank source labels without artificial raid difficulty variants.
+- AtlasLoot crafting source ownership: professions from `CraftingCLASSIC`, `CraftingTBC`, and `CraftingWRATH` must appear only in the matching expansion's `Crafting` section; Classic-only sources repeated in a later navigation group must retain their first owner.
+- AtlasLoot crafting source availability: a profession whose menu exists but whose item tables are not loaded must not expose an empty checkbox. With the bundled AtlasLoot database this yields 11 Classic, 10 TBC, and zero Wrath crafting choices.
+- AtlasLoot crafting recipe resolution: rows containing only `spellID` must resolve the crafted result through `AtlasLoot:GetCraftedItemID`; an explicit row `itemID` remains the fallback when resolution fails.
+- AtlasLoot crafting source controls: the same localized profession name must be independently toggleable per expansion, and disabling one profession must remove only its crafted outputs after cache refresh.
+- AtlasLoot crafting item mapping: crafted outputs must retain their direct item IDs and recipe-category source labels without artificial dungeon/raid difficulty variants; normal equipability, profile, and armor restrictions remain active.
+- Loot Sources layout regression: at the standard 1094x862 Interface Options presentation, LootCollector, AtlasLoot filters, cache status, bulk source buttons, and the source selector must occupy separate non-overlapping regions.
+- Loot Sources scrolling regression: only the bounded visible source-row pool may be shown inside the bordered selector; additional raids, Tier Sets, reputation factions, and crafting professions must be reachable through its visible WotLK scroll bar and mouse wheel without drawing below the viewport.
+- Loot Sources copy regression: the panel must use concise labels and one short dungeon hint; the former multiline slash-command help block must not consume or overlap configuration space.
 - Search max-level filter (from search window): with `Max Required Level = 38`, results must exclude items requiring level 39+.
 - Search max-level filter updates must not trigger a full cache rebuild; only search results should change.
 - Search max-level input must keep proper focus behavior (cursor should stop blinking after clicking other search controls/background).

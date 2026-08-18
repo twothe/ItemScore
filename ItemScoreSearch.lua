@@ -3,6 +3,9 @@ local addonName, addon = ...
 -- Search UI and slash-command surface for scoring cached provider items against configured profiles.
 local LIST_UPGRADES_MAX = 6
 local LIST_SLOT_MAX = 20
+local IGNORE_CLASS_RESTRICTION_EQUIP_OPTIONS = {
+	ignoreClassRestriction = true,
+}
 
 local Search = {}
 addon.Search = Search
@@ -1013,7 +1016,8 @@ local function processSearchTask(state, maxOps)
 
 			if not blockedByArmorType and not blockedByWeaponType and not blockedByLevel then
 				local itemLink = itemInfo.link or itemInfo.raw or raw
-				if addon.CanPlayerEquip(itemLink) then
+				local equipOptions = itemMetadata and itemMetadata.ignoreClassRestriction and IGNORE_CLASS_RESTRICTION_EQUIP_OPTIONS or nil
+				if addon.CanPlayerEquip(itemLink, equipOptions) then
 					local score = addon.CalculateScore(itemLink, state.profileName)
 					if score and score >= 5 then
 						local sources = state.itemSources[itemID] or {}
@@ -1251,7 +1255,7 @@ local function printHelp()
 	print("/is atlas classic on|off")
 	print("/is atlas tbc on|off")
 	print("/is atlas wrath on|off")
-	print("/is atlas raid on|off  (enable/disable all raids)")
+	print("/is atlas raid on|off  (enable/disable all raids and Tier Sets)")
 	print("/is atlas place on <Area Name>")
 	print("/is atlas place off <Area Name>")
 	print("/is atlas place list")
@@ -1393,7 +1397,7 @@ SlashCmdList["ISSEARCH"] = function(msg)
 				queueRefreshSafe("atlas_raid_all")
 				refreshCacheSafe(true, true)
 			end
-			print(string.format("ItemScore: all AtlasLoot raids %s.", enabled and "enabled" or "disabled"))
+			print(string.format("ItemScore: all AtlasLoot raids and Tier Sets %s.", enabled and "enabled" or "disabled"))
 			return
 		end
 

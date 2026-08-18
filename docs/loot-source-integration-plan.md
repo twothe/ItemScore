@@ -127,20 +127,20 @@ Rationale:
 ### AtlasLoot extraction
 Preparation:
 - If AtlasLoot is installed but not loaded, attempt guarded `LoadAddOn("AtlasLoot")`.
-- In split-module releases, load only enabled expansion modules during cache build and all expansion modules when building the raid checklist for the settings UI.
+- In split-module releases, load only enabled expansion modules during cache build and all expansion modules when building the selectable source list for the settings UI.
 - In split-module releases, use `AtlasLoot:IsLootTableAvailable("AtlasLoot_OriginalWoW")`, `AtlasLoot:IsLootTableAvailable("AtlasLoot_BurningCrusade")`, and `AtlasLoot:IsLootTableAvailable("AtlasLoot_WrathoftheLichKing")` when available.
 - In monolithic 8.1+ releases, use the already initialized core menu/item data and do not probe obsolete expansion addons.
 - Select the runtime adapter automatically:
 	- prefer `atlasloot_v8` when `AtlasLoot.ui.menus.data` and `AtlasLoot.data.item` are available.
-	- in monolithic 8.1+ data, restrict scanning to the authoritative `DungeonsAndRaids*` collections so collection/PvP menus reusing dungeon or raid difficulty types are not misclassified as instance loot.
+	- in monolithic 8.1+ data, derive instances from authoritative `DungeonsAndRaids*` collections, admit only Classic `TONE`/`TTWO`/`TTHREE` from `CollectionsCLASSIC`, and derive reputation/crafting sources from `Factions*`/`Crafting*`; unrelated collection/PvP menus remain excluded even if they reuse raid difficulty types.
 	- fall back to `legacy` when useful `AtlasLoot_Data` tables are available.
 
 Selection filter:
-- Include only tables that look like loot-instance datasets.
-- Preferred filter:
-	- `Type` contains `"Dungeon"` or `"Raid"`, or
-	- table has nested entries with `Name` + item lists and module in dungeon/raid expansion addons.
-- Exclude known crafting/collection/vanity-only datasets.
+- Include dungeon and raid tables owned by `DungeonsAndRaids*`.
+- Include only the explicitly supported Tier 1-3 tables owned by `CollectionsCLASSIC`.
+- Include reputation tables owned by `Factions*` only when their corresponding item rows are loaded.
+- Include crafting tables owned by `Crafting*` only when their corresponding item rows are loaded.
+- Exclude PvP, vanity, and all unrelated collection datasets.
 
 Mapping:
 - `place = instance/menu Name`.
@@ -182,7 +182,13 @@ Refresh triggers:
 - Raid AtlasLoot variants are included up to `Raid Max Difficulty` (`Normal`, `Heroic`, `Mythic`, `Ascended`) in `Interface -> AddOns -> ItemScore -> Loot Sources`.
 - Raids are individually toggleable in `Interface -> AddOns -> ItemScore -> Loot Sources` (grouped by expansion).
 - `The Karazhan Crypts` is treated as a raid even though AtlasLoot labels its Classic copy as `ClassicDungeonExt` and uses the custom `BCkarazhanCrypts` type for its TBC copy. Both copies therefore follow raid difficulty and per-raid enablement controls.
-- `/is atlas raid on|off`: convenience switch for all raids at once.
+- AtlasLoot Classic `Tier 1`, `Tier 2`, and `Tier 3` are admitted from the otherwise excluded `CollectionsCLASSIC` navigation group. They behave like raids for checklist and difficulty controls. Their catalog metadata suppresses tooltip class restrictions during search, but never bypasses profile armor-type filters or native armor eligibility.
+- AtlasLoot reputation sources are admitted from `FactionsCLASSIC`, `FactionsTBC`, and `FactionsWRATH`, shown under their owning expansion, and individually toggleable. Reputation rewards use the direct AtlasLoot item IDs without synthetic raid-difficulty variants. A faction is shown only when its item rows are loaded; this prevents empty controls when an AtlasLoot release ships a menu but does not load the corresponding database file.
+- The bundled AtlasLoot 8.1 installation loads Classic and TBC reputation item files. It defines Wrath faction menus and ships `Databases/Items/Wrath/Instances.lua`, but its `Databases/Items/Databases.xml` does not load that file. ItemScore therefore exposes the 12 loaded Classic and 21 loaded TBC factions now, and will expose Wrath factions automatically if AtlasLoot loads their item tables in a future or corrected installation.
+- AtlasLoot crafting sources are admitted from `CraftingCLASSIC`, `CraftingTBC`, and `CraftingWRATH`, grouped by their owning expansion, and individually toggleable per expansion. Crafting rows primarily contain recipe `spellID` values, which ItemScore resolves through `AtlasLoot:GetCraftedItemID` to score the crafted output. Outputs retain their direct item IDs and never receive dungeon/raid difficulty variants; the regular equipability, profile, and armor restrictions remain active.
+- A crafting profession is shown only when its AtlasLoot item rows are loaded. The bundled AtlasLoot 8.1 installation loads 11 Classic and 10 TBC crafting professions, while its `Databases/Items/Databases.xml` omits the Wrath crafting file. WotLK crafting therefore appears automatically only after AtlasLoot loads those item tables. The Classic-only Woodworking and Woodcutting sources repeated in AtlasLoot's TBC navigation retain Classic ownership.
+- The Loot Sources panel keeps provider and difficulty controls in fixed left-hand groups. The right-hand raid, Tier Set, reputation, and crafting selector uses a bordered WotLK `FauxScrollFrame` with a bounded reusable row pool, so expansion-dependent source counts cannot overlap controls below the viewport.
+- `/is atlas raid on|off`: convenience switch for all raids and Tier 1-3 sources at once.
 - `/is atlas place on <Area Name>` / `/is atlas place off <Area Name>`: per-area toggle for locked/unavailable content.
 - `/is atlas place list`: inspect disabled areas.
 - `/is atlas place all`: list known cached area names for easier toggling.

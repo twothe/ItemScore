@@ -4,7 +4,7 @@ local addonName, addon = ...
 local provider = {
 	key = "AtlasLoot",
 }
-local raidChoicesCache = {
+local sourceChoicesCache = {
 	data = nil,
 	builtAt = 0,
 }
@@ -29,10 +29,24 @@ local RAID_TYPES = {
 	WrathRaid = true,
 }
 
+local CRAFTING_TYPES = {
+	ClassicCrafting = true,
+	BCCrafting = true,
+	WrathCrafting = true,
+}
+
 -- AtlasLoot exposes the Classic copy of this raid as ClassicDungeonExt.
 -- Keep the instance override centralized so collection and configuration agree.
 local RAID_PLACES = {
 	["The Karazhan Crypts"] = true,
+}
+
+-- These raid reward tables live in AtlasLoot's Collections navigation instead
+-- of DungeonsAndRaids, so they need an explicit and deliberately narrow allowlist.
+local TIER_SET_DATA_IDS = {
+	TONE = true,
+	TTWO = true,
+	TTHREE = true,
 }
 
 local DIFFICULTY_BY_NAME = {
@@ -72,6 +86,9 @@ local EXPANSION_BY_LOOT_TYPE = {
 	BCRaid = "tbc",
 	WrathDungeon = "wrath",
 	WrathRaid = "wrath",
+	ClassicCrafting = "classic",
+	BCCrafting = "tbc",
+	WrathCrafting = "wrath",
 }
 
 local function clean(text)
@@ -87,6 +104,10 @@ end
 local function nowSeconds()
 	if type(time) == "function" then return time() end
 	return 0
+end
+
+local function isTierSetDataID(dataID)
+	return TIER_SET_DATA_IDS[tostring(dataID)] and true or false
 end
 
 local function addonInstalled(addonName)
@@ -186,6 +207,8 @@ local function normalizeSettings(settings)
 		atlasRaidMaxDifficulty = normalizeRaidMaxDifficulty(settings.atlasRaidMaxDifficulty),
 		atlasDisabledPlaces = type(settings.atlasDisabledPlaces) == "table" and settings.atlasDisabledPlaces or {},
 		atlasDisabledRaids = type(settings.atlasDisabledRaids) == "table" and settings.atlasDisabledRaids or {},
+		atlasDisabledFactions = type(settings.atlasDisabledFactions) == "table" and settings.atlasDisabledFactions or {},
+		atlasDisabledCrafting = type(settings.atlasDisabledCrafting) == "table" and settings.atlasDisabledCrafting or {},
 	}
 end
 
@@ -212,11 +235,22 @@ local function loadAtlasLootModule(atlasLoot, moduleName)
 	return loadAddonIfInstalled(moduleName)
 end
 
+local function indexSourceDataID(expansionByDataID, categoryByDataID, dataID, expansionKey, category)
+	if dataID == nil then return end
+	expansionByDataID[dataID] = expansionKey
+	expansionByDataID[tostring(dataID)] = expansionKey
+	if category then
+		categoryByDataID[dataID] = category
+		categoryByDataID[tostring(dataID)] = category
+	end
+end
+
 local function getMonolithicExpansionIndex(atlasLoot)
 	local collection = atlasLoot and atlasLoot.ui and atlasLoot.ui.menus and atlasLoot.ui.menus.collection
 	local byDataID = {}
+	local categoryByDataID = {}
 	local foundCollection = false
-	if type(collection) ~= "table" then return byDataID, foundCollection end
+	if type(collection) ~= "table" then return byDataID, foundCollection, categoryByDataID end
 
 	for _, expansionKey in ipairs(EXPANSION_ORDER) do
 		local collectionKey = "DungeonsAndRaids" .. string.upper(expansionKey)
@@ -225,15 +259,51 @@ local function getMonolithicExpansionIndex(atlasLoot)
 			foundCollection = true
 			for _, entry in ipairs(entries) do
 				local dataID = type(entry) == "table" and entry[1]
-				if dataID ~= nil then
-					byDataID[dataID] = expansionKey
-					byDataID[tostring(dataID)] = expansionKey
+				indexSourceDataID(byDataID, categoryByDataID, dataID, expansionKey, "instance")
+			end
+		end
+	end
+
+	-- Tier 1-3 are raid rewards, but AtlasLoot exposes them only through the
+	-- Classic Collections menu. Do not admit any other collection categories.
+	local classicCollections = collection.CollectionsCLASSIC
+	if type(classicCollections) == "table" then
+		for _, entry in ipairs(classicCollections) do
+			local dataID = type(entry) == "table" and entry[1]
+			if isTierSetDataID(dataID) then
+				indexSourceDataID(byDataID, categoryByDataID, dataID, "classic", "tierSet")
+			end
+		end
+	end
+
+	-- Reputation menus are authoritative for expansion ownership. Their entries
+	-- are admitted only when the corresponding AtlasLoot menu and item rows exist.
+	for _, expansionKey in ipairs(EXPANSION_ORDER) do
+		local entries = collection["Factions" .. string.upper(expansionKey)]
+		if type(entries) == "table" then
+			for _, entry in ipairs(entries) do
+				local dataID = type(entry) == "table" and entry[1]
+				indexSourceDataID(byDataID, categoryByDataID, dataID, expansionKey, "faction")
+			end
+		end
+	end
+
+	-- Crafting navigation is also authoritative for expansion ownership. A few
+	-- Classic-only custom professions are repeated in the TBC navigation; retain
+	-- their first (Classic) owner so one source never appears in two expansions.
+	for _, expansionKey in ipairs(EXPANSION_ORDER) do
+		local entries = collection["Crafting" .. string.upper(expansionKey)]
+		if type(entries) == "table" then
+			for _, entry in ipairs(entries) do
+				local dataID = type(entry) == "table" and entry[1]
+				if dataID ~= nil and byDataID[dataID] == nil and byDataID[tostring(dataID)] == nil then
+					indexSourceDataID(byDataID, categoryByDataID, dataID, expansionKey, "crafting")
 				end
 			end
 		end
 	end
 
-	return byDataID, foundCollection
+	return byDataID, foundCollection, categoryByDataID
 end
 
 local function betaExpansionMeta(lootMenu, dataID, expansionByDataID, hasExpansionCollections)
@@ -245,7 +315,7 @@ local function betaExpansionMeta(lootMenu, dataID, expansionByDataID, hasExpansi
 	if hasExpansionCollections then return nil end
 
 	-- Early 8.x betas may expose menus without the collection index. The exact
-	-- dungeon/raid type remains a safe fallback, unlike a broad name match.
+	-- dungeon, raid, or crafting type remains a safe fallback, unlike a broad name match.
 	expansionKey = type(lootMenu) == "table" and EXPANSION_BY_LOOT_TYPE[lootMenu.Type]
 	return expansionKey and EXPANSION_META_BY_KEY[expansionKey] or nil
 end
@@ -385,6 +455,11 @@ end
 -- Adds all configured AtlasLoot difficulty variants for one source row.
 local function addDifficultyMappings(state, addMapping, itemRow, itemID)
 	local sourceMeta = state.currentSource
+	if sourceMeta.isFaction or sourceMeta.isCrafting then
+		addMapping(sourceMeta.placeName, sourceMeta.sourceName, itemID)
+		return 1
+	end
+
 	local minDifficulty, maxDifficulty = itemDifficultyBounds(state, sourceMeta, itemRow)
 	if not minDifficulty then return 0 end
 
@@ -398,6 +473,7 @@ local function addDifficultyMappings(state, addMapping, itemRow, itemID)
 			addMapping(sourceMeta.placeName, sourceMeta.sourceName, difficultyItemID, {
 				difficultyLabel = difficultyDisplayLabel(sourceMeta, difficulty),
 				difficultyRank = difficulty,
+				ignoreClassRestriction = sourceMeta.ignoreClassRestriction,
 			})
 			added = added + 1
 		end
@@ -410,35 +486,61 @@ local function raidEnabled(placeName, settings)
 	return not disabledRaids[placeName]
 end
 
-local function sourceAllowed(placeName, hasDungeon, hasRaid, settings)
+local function factionEnabled(placeName, settings)
+	local disabledFactions = settings.atlasDisabledFactions or {}
+	return not disabledFactions[placeName]
+end
+
+local function craftingEnabled(expansionKey, placeName, settings)
+	local disabledByExpansion = settings.atlasDisabledCrafting or {}
+	local disabledCrafting = disabledByExpansion[expansionKey]
+	return type(disabledCrafting) ~= "table" or not disabledCrafting[placeName]
+end
+
+local function sourceAllowed(placeName, expansionKey, hasDungeon, hasRaid, isFaction, isCrafting, settings)
 	if settings.atlasDisabledPlaces[placeName] then return false end
 	if hasDungeon then return true end
 	if hasRaid and raidEnabled(placeName, settings) then return true end
+	if isFaction and factionEnabled(placeName, settings) then return true end
+	if isCrafting and craftingEnabled(expansionKey, placeName, settings) then return true end
 	return false
 end
 
-local function createRaidChoiceMap()
+local function createSourceChoiceMap()
 	local byExpansion = {}
 	for _, expansionKey in ipairs(EXPANSION_ORDER) do
-		byExpansion[expansionKey] = {}
+		byExpansion[expansionKey] = {
+			raids = {},
+			tierSets = {},
+			factions = {},
+			crafting = {},
+		}
 	end
 	return byExpansion
 end
 
-local function buildRaidChoiceGroups(byExpansion)
+local function sortedChoiceNames(choiceSet)
+	local choices = {}
+	for choiceName in pairs(choiceSet or {}) do
+		choices[#choices + 1] = choiceName
+	end
+	table.sort(choices)
+	return choices
+end
+
+local function buildSourceChoiceGroups(byExpansion)
 	local groups = {}
 	for _, expansionKey in ipairs(EXPANSION_ORDER) do
 		local moduleName = EXPANSION_MODULE_BY_KEY[expansionKey]
 		local moduleMeta = moduleName and MODULE_EXPANSIONS[moduleName]
-		local raids = {}
-		for raidName in pairs(byExpansion[expansionKey]) do
-			raids[#raids + 1] = raidName
-		end
-		table.sort(raids)
+		local expansionChoices = byExpansion[expansionKey]
 		groups[#groups + 1] = {
 			key = expansionKey,
 			label = moduleMeta and moduleMeta.label or expansionKey,
-			raids = raids,
+			raids = sortedChoiceNames(expansionChoices.raids),
+			tierSets = sortedChoiceNames(expansionChoices.tierSets),
+			factions = sortedChoiceNames(expansionChoices.factions),
+			crafting = sortedChoiceNames(expansionChoices.crafting),
 		}
 	end
 	return groups
@@ -467,11 +569,11 @@ local function itemTableByKey(itemData, tableKey)
 	return itemData[tostring(tableKey)]
 end
 
-local function appendDirectItemRows(rows, itemTable)
+local function appendDirectItemRows(rows, itemTable, allowSpellRows)
 	if type(itemTable) ~= "table" then return 0 end
 	local added = 0
 	for _, itemRow in ipairs(itemTable) do
-		if type(itemRow) == "table" and tonumber(itemRow.itemID) then
+		if type(itemRow) == "table" and (tonumber(itemRow.itemID) or (allowSpellRows and tonumber(itemRow.spellID))) then
 			rows[#rows + 1] = itemRow
 			added = added + 1
 		end
@@ -479,26 +581,49 @@ local function appendDirectItemRows(rows, itemTable)
 	return added
 end
 
-local function appendBetaItemTableRows(itemData, tableKey, rows, seenItemTables)
+local function appendBetaItemTableRows(itemData, tableKey, rows, seenItemTables, allowSpellRows)
 	local itemTable = itemTableByKey(itemData, tableKey)
 	if type(itemTable) ~= "table" then return false, 0 end
 	if seenItemTables[itemTable] then return true, 0 end
 	seenItemTables[itemTable] = true
-	return true, appendDirectItemRows(rows, itemTable)
+	return true, appendDirectItemRows(rows, itemTable, allowSpellRows)
 end
 
-local function appendItemRowsDeep(rows, data, visited, depth)
+local function betaMenuHasItemRows(itemData, dataID, lootMenu, allowSpellRows)
+	for pageIndex, menuEntry in ipairs(lootMenu or {}) do
+		if type(menuEntry) == "table" then
+			local rows = {}
+			local seenItemTables = {}
+			appendBetaItemTableRows(itemData, tostring(dataID) .. tostring(pageIndex), rows, seenItemTables, allowSpellRows)
+			if type(menuEntry[2]) == "table" then
+				for _, refKey in ipairs(menuEntry[2]) do
+					appendBetaItemTableRows(itemData, refKey, rows, seenItemTables, allowSpellRows)
+				end
+			end
+			if #rows > 0 then return true end
+		end
+	end
+	return false
+end
+
+local function appendItemRowsDeep(rows, data, visited, depth, allowSpellRows)
 	if type(data) ~= "table" then return end
 	if visited[data] then return end
 	if depth > 6 then return end
 	visited[data] = true
-	if tonumber(data.itemID) then
+	if tonumber(data.itemID) or (allowSpellRows and tonumber(data.spellID)) then
 		rows[#rows + 1] = data
 		return
 	end
 	for _, value in pairs(data) do
-		appendItemRowsDeep(rows, value, visited, depth + 1)
+		appendItemRowsDeep(rows, value, visited, depth + 1, allowSpellRows)
 	end
+end
+
+local function hasItemRowsDeep(data, allowSpellRows)
+	local rows = {}
+	appendItemRowsDeep(rows, data, {}, 0, allowSpellRows)
+	return #rows > 0
 end
 
 local function sortSources(sources)
@@ -513,7 +638,7 @@ end
 -- Builds source records from AtlasLoot 8.x beta menus and item data.
 local function buildBetaCollectSources(atlasLoot, settings)
 	local menusData, itemData = getBetaDataTables(atlasLoot)
-	local expansionByDataID, hasExpansionCollections = getMonolithicExpansionIndex(atlasLoot)
+	local expansionByDataID, hasExpansionCollections, categoryByDataID = getMonolithicExpansionIndex(atlasLoot)
 	local meta = {
 		ready = menusData ~= nil and itemData ~= nil,
 		scannedMenus = 0,
@@ -526,24 +651,28 @@ local function buildBetaCollectSources(atlasLoot, settings)
 	for dataID, lootMenu in pairs(menusData) do
 		if type(lootMenu) == "table" then
 			local moduleMeta = betaExpansionMeta(lootMenu, dataID, expansionByDataID, hasExpansionCollections)
+			local sourceCategory = categoryByDataID[dataID] or categoryByDataID[tostring(dataID)]
 			if moduleMeta then
 				meta.scannedMenus = meta.scannedMenus + 1
 			end
 			if moduleMeta and expansionEnabled(moduleMeta.key, settings) then
 				local placeName = clean(lootMenu.Name) or clean(dataID) or "Unknown Place"
 				local hasDungeon, hasRaid = lootTypeFlags(lootMenu.Type, placeName)
-				if (hasDungeon or hasRaid) and sourceAllowed(placeName, hasDungeon, hasRaid, settings) then
+				local isTierSet = sourceCategory == "tierSet" or isTierSetDataID(dataID)
+				local isFaction = sourceCategory == "faction"
+				local isCrafting = sourceCategory == "crafting" or (not hasExpansionCollections and CRAFTING_TYPES[lootMenu.Type])
+				if (hasDungeon or hasRaid or isFaction or isCrafting) and sourceAllowed(placeName, moduleMeta.key, hasDungeon, hasRaid, isFaction, isCrafting, settings) then
 					for pageIndex, menuEntry in ipairs(lootMenu) do
 						if type(menuEntry) == "table" then
 							local rows = {}
 							local seenItemTables = {}
-							local directFound = appendBetaItemTableRows(itemData, tostring(dataID) .. tostring(pageIndex), rows, seenItemTables)
+							local directFound = appendBetaItemTableRows(itemData, tostring(dataID) .. tostring(pageIndex), rows, seenItemTables, isCrafting)
 							if not directFound then
 								meta.missingItemTables = meta.missingItemTables + 1
 							end
 							if type(menuEntry[2]) == "table" then
 								for _, refKey in ipairs(menuEntry[2]) do
-									appendBetaItemTableRows(itemData, refKey, rows, seenItemTables)
+									appendBetaItemTableRows(itemData, refKey, rows, seenItemTables, isCrafting)
 								end
 							end
 							if #rows > 0 then
@@ -554,6 +683,9 @@ local function buildBetaCollectSources(atlasLoot, settings)
 									typeName = lootMenu.Type,
 									isDungeon = hasDungeon,
 									isRaid = hasRaid,
+									isFaction = isFaction,
+									isCrafting = isCrafting,
+									ignoreClassRestriction = isTierSet,
 									rows = rows,
 								}
 							end
@@ -569,7 +701,7 @@ local function buildBetaCollectSources(atlasLoot, settings)
 end
 
 -- Builds source records from legacy AtlasLoot_Data layouts.
-local function buildLegacyCollectSources(atlasData, settings)
+local function buildLegacyCollectSources(atlasLoot, atlasData, settings)
 	local meta = {
 		ready = type(atlasData) == "table",
 		scannedMenus = 0,
@@ -577,21 +709,27 @@ local function buildLegacyCollectSources(atlasData, settings)
 	}
 	local sources = {}
 	if not meta.ready then return sources, meta end
+	local expansionByDataID, _, categoryByDataID = getMonolithicExpansionIndex(atlasLoot)
 
 	for dataID, lootTable in pairs(atlasData) do
 		if type(lootTable) == "table" then
-			local moduleMeta = MODULE_EXPANSIONS[lootTable.Module]
+			local indexedExpansion = expansionByDataID[dataID] or expansionByDataID[tostring(dataID)]
+			local moduleMeta = MODULE_EXPANSIONS[lootTable.Module] or (indexedExpansion and EXPANSION_META_BY_KEY[indexedExpansion])
+			local sourceCategory = categoryByDataID[dataID] or categoryByDataID[tostring(dataID)]
 			if moduleMeta then
 				meta.scannedMenus = meta.scannedMenus + 1
 			end
 			if moduleMeta and expansionEnabled(moduleMeta.key, settings) then
 				local placeName = clean(lootTable.Name) or clean(dataID) or "Unknown Place"
 				local hasDungeon, hasRaid = lootTypeFlags(lootTable.Type, placeName)
-				if (hasDungeon or hasRaid) and sourceAllowed(placeName, hasDungeon, hasRaid, settings) then
+				local isTierSet = sourceCategory == "tierSet" or isTierSetDataID(dataID)
+				local isFaction = sourceCategory == "faction"
+				local isCrafting = sourceCategory == "crafting" or CRAFTING_TYPES[lootTable.Type]
+				if (hasDungeon or hasRaid or isFaction or isCrafting) and sourceAllowed(placeName, moduleMeta.key, hasDungeon, hasRaid, isFaction, isCrafting, settings) then
 					for _, sourceTable in pairs(lootTable) do
 						if type(sourceTable) == "table" and sourceTable.Name then
 							local rows = {}
-							appendItemRowsDeep(rows, sourceTable, {}, 0)
+							appendItemRowsDeep(rows, sourceTable, {}, 0, isCrafting)
 							if #rows > 0 then
 								meta.scannedSources = meta.scannedSources + 1
 								sources[#sources + 1] = {
@@ -600,6 +738,9 @@ local function buildLegacyCollectSources(atlasData, settings)
 									typeName = lootTable.Type,
 									isDungeon = hasDungeon,
 									isRaid = hasRaid,
+									isFaction = isFaction,
+									isCrafting = isCrafting,
+									ignoreClassRestriction = isTierSet,
 									rows = rows,
 								}
 							end
@@ -620,62 +761,72 @@ local function selectCollectAdapter(atlasLoot, settings)
 		return "atlasloot_v8", betaSources, betaMeta
 	end
 
-	local legacySources, legacyMeta = buildLegacyCollectSources(_G.AtlasLoot_Data, settings)
+	local legacySources, legacyMeta = buildLegacyCollectSources(atlasLoot, _G.AtlasLoot_Data, settings)
 	if legacyMeta.ready and (legacyMeta.scannedMenus > 0 or not anyExpansionEnabled(settings)) then
 		return "legacy", legacySources, legacyMeta
 	end
 
 	if betaMeta.ready then
-		betaMeta.reason = "AtlasLoot beta data found, but no supported dungeon or raid menus are loaded"
+		betaMeta.reason = "AtlasLoot beta data found, but no supported loot-source menus are loaded"
 		return "atlasloot_v8", betaSources, betaMeta
 	end
 	if legacyMeta.ready then
-		legacyMeta.reason = "AtlasLoot_Data found, but no supported dungeon or raid tables are loaded"
+		legacyMeta.reason = "AtlasLoot_Data found, but no supported loot-source tables are loaded"
 		return "legacy", legacySources, legacyMeta
 	end
 	return nil, {}, { reason = "No supported AtlasLoot data layout available" }
 end
 
-local function buildBetaRaidChoices(atlasLoot)
-	local menusData = getBetaDataTables(atlasLoot)
-	if type(menusData) ~= "table" then return nil end
-	local expansionByDataID, hasExpansionCollections = getMonolithicExpansionIndex(atlasLoot)
-	local byExpansion = createRaidChoiceMap()
+local function buildBetaSourceChoices(atlasLoot)
+	local menusData, itemData = getBetaDataTables(atlasLoot)
+	if type(menusData) ~= "table" or type(itemData) ~= "table" then return nil end
+	local expansionByDataID, hasExpansionCollections, categoryByDataID = getMonolithicExpansionIndex(atlasLoot)
+	local byExpansion = createSourceChoiceMap()
 	for dataID, lootMenu in pairs(menusData) do
 		if type(lootMenu) == "table" then
 			local moduleMeta = betaExpansionMeta(lootMenu, dataID, expansionByDataID, hasExpansionCollections)
 			if moduleMeta then
 				local placeName = clean(lootMenu.Name) or clean(dataID)
 				local _, hasRaid = lootTypeFlags(lootMenu.Type, placeName)
-				if hasRaid then
-					if placeName then
-						byExpansion[moduleMeta.key][placeName] = true
-					end
+				local sourceCategory = categoryByDataID[dataID] or categoryByDataID[tostring(dataID)]
+				if placeName and hasRaid then
+					local target = sourceCategory == "tierSet" and byExpansion[moduleMeta.key].tierSets or byExpansion[moduleMeta.key].raids
+					target[placeName] = true
+				elseif placeName and sourceCategory == "faction" and betaMenuHasItemRows(itemData, dataID, lootMenu, false) then
+					byExpansion[moduleMeta.key].factions[placeName] = true
+				elseif placeName and sourceCategory == "crafting" and betaMenuHasItemRows(itemData, dataID, lootMenu, true) then
+					byExpansion[moduleMeta.key].crafting[placeName] = true
 				end
 			end
 		end
 	end
-	return buildRaidChoiceGroups(byExpansion)
+	return buildSourceChoiceGroups(byExpansion)
 end
 
-local function buildLegacyRaidChoices(atlasData)
+local function buildLegacySourceChoices(atlasLoot, atlasData)
 	if type(atlasData) ~= "table" then return nil end
-	local byExpansion = createRaidChoiceMap()
+	local byExpansion = createSourceChoiceMap()
+	local expansionByDataID, _, categoryByDataID = getMonolithicExpansionIndex(atlasLoot)
 	for dataID, lootTable in pairs(atlasData) do
 		if type(lootTable) == "table" then
-			local moduleMeta = MODULE_EXPANSIONS[lootTable.Module]
+			local indexedExpansion = expansionByDataID[dataID] or expansionByDataID[tostring(dataID)]
+			local moduleMeta = MODULE_EXPANSIONS[lootTable.Module] or (indexedExpansion and EXPANSION_META_BY_KEY[indexedExpansion])
 			if moduleMeta then
 				local placeName = clean(lootTable.Name) or clean(dataID)
 				local _, hasRaid = lootTypeFlags(lootTable.Type, placeName)
-				if hasRaid then
-					if placeName then
-						byExpansion[moduleMeta.key][placeName] = true
-					end
+				local sourceCategory = categoryByDataID[dataID] or categoryByDataID[tostring(dataID)]
+				if placeName and hasRaid then
+					local target = (sourceCategory == "tierSet" or isTierSetDataID(dataID)) and byExpansion[moduleMeta.key].tierSets or byExpansion[moduleMeta.key].raids
+					target[placeName] = true
+				elseif placeName and sourceCategory == "faction" and hasItemRowsDeep(lootTable, false) then
+					byExpansion[moduleMeta.key].factions[placeName] = true
+				elseif placeName and (sourceCategory == "crafting" or CRAFTING_TYPES[lootTable.Type]) and hasItemRowsDeep(lootTable, true) then
+					byExpansion[moduleMeta.key].crafting[placeName] = true
 				end
 			end
 		end
 	end
-	return buildRaidChoiceGroups(byExpansion)
+	return buildSourceChoiceGroups(byExpansion)
 end
 
 local function createDoneState(reason, atlasLoot, adapterName)
@@ -718,11 +869,11 @@ function provider.GetMaxDungeonMythicLevel()
 	return getMaxDungeonMythicLevelFromAtlasLoot(atlasLoot)
 end
 
--- Returns raid names grouped by AtlasLoot expansion for the source settings UI.
-function provider.GetRaidChoices(settings)
+-- Returns selectable raids, tier sets, factions, and crafting professions grouped by AtlasLoot expansion.
+function provider.GetSourceChoices(settings)
 	local currentTime = nowSeconds()
-	if raidChoicesCache.data and (currentTime - raidChoicesCache.builtAt) < 10 then
-		return raidChoicesCache.data
+	if sourceChoicesCache.data and (currentTime - sourceChoicesCache.builtAt) < 10 then
+		return sourceChoicesCache.data
 	end
 
 	if not ensureAtlasLootLoaded() then return {} end
@@ -733,12 +884,15 @@ function provider.GetRaidChoices(settings)
 	local normalizedSettings = normalizeSettings(settings)
 	ensureExpansionModulesLoaded(atlasLoot, normalizedSettings, true)
 
-	local choices = buildBetaRaidChoices(atlasLoot) or buildLegacyRaidChoices(_G.AtlasLoot_Data)
+	local choices = buildBetaSourceChoices(atlasLoot) or buildLegacySourceChoices(atlasLoot, _G.AtlasLoot_Data)
 	if not choices then return {} end
-	raidChoicesCache.data = choices
-	raidChoicesCache.builtAt = currentTime
-	return raidChoicesCache.data
+	sourceChoicesCache.data = choices
+	sourceChoicesCache.builtAt = currentTime
+	return sourceChoicesCache.data
 end
+
+-- Compatibility for existing ItemScore callers and older integrations.
+provider.GetRaidChoices = provider.GetSourceChoices
 
 -- Starts an incremental AtlasLoot scan using the adapter that matches the loaded AtlasLoot version.
 function provider.StartCollect(settings)
@@ -784,6 +938,21 @@ function provider.StartCollect(settings)
 	}
 end
 
+-- Crafting tables primarily store recipe spell IDs. Resolve the crafted result
+-- exactly as AtlasLoot's item frame does, retaining an explicit itemID fallback.
+local function resolveSourceRowItemID(state, itemRow)
+	if state.currentSource and state.currentSource.isCrafting and tonumber(itemRow.spellID) then
+		local getCraftedItemID = state.atlasLoot and state.atlasLoot.GetCraftedItemID
+		if type(getCraftedItemID) == "function" then
+			local ok, craftedItemID = pcall(getCraftedItemID, state.atlasLoot, tonumber(itemRow.spellID))
+			craftedItemID = ok and tonumber(craftedItemID) or nil
+			if craftedItemID and craftedItemID > 0 then return craftedItemID end
+		end
+	end
+	local itemID = tonumber(itemRow.itemID)
+	return itemID and itemID > 0 and itemID or nil
+end
+
 -- Processes AtlasLoot rows in small batches so cache rebuilds stay frame-friendly.
 function provider.StepCollect(state, addMapping, maxOps)
 	if state.done then return true, 0 end
@@ -812,8 +981,8 @@ function provider.StepCollect(state, addMapping, maxOps)
 			state.currentRowCursor = state.currentRowCursor + 1
 			ops = ops + 1
 			if type(itemRow) == "table" then
-				local itemID = tonumber(itemRow.itemID)
-				if itemID and itemID > 0 then
+				local itemID = resolveSourceRowItemID(state, itemRow)
+				if itemID then
 					local added = addDifficultyMappings(state, addMapping, itemRow, itemID)
 					if added > 0 then
 						state.stats.items = state.stats.items + added

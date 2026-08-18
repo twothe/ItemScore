@@ -1,7 +1,7 @@
 local addonName, addon = ...
 
 -- Search source manager: owns provider registration, cache fingerprints, background rebuilds, and provider status.
-local CACHE_SCHEMA_VERSION = 7
+local CACHE_SCHEMA_VERSION = 9
 local CACHE_REFRESH_INTERVAL_SECONDS = 24 * 60 * 60
 local MAX_DUNGEON_MYTHIC_LEVEL_FALLBACK = 40
 local RAID_DIFFICULTY_NORMAL = 3
@@ -80,6 +80,8 @@ local function defaultSourceSettings()
 		atlasRaidMaxDifficulty = DEFAULT_ATLAS_RAID_MAX_DIFFICULTY,
 		atlasDisabledPlaces = {},
 		atlasDisabledRaids = {},
+		atlasDisabledFactions = {},
+		atlasDisabledCrafting = {},
 		worldforgedZG = true,
 		worldforgedMC = true,
 		worldforgedBWL = true,
@@ -107,6 +109,12 @@ local function ensureSettings()
 	end
 	if type(ItemScoreData.searchSources.atlasDisabledRaids) ~= "table" then
 		ItemScoreData.searchSources.atlasDisabledRaids = {}
+	end
+	if type(ItemScoreData.searchSources.atlasDisabledFactions) ~= "table" then
+		ItemScoreData.searchSources.atlasDisabledFactions = {}
+	end
+	if type(ItemScoreData.searchSources.atlasDisabledCrafting) ~= "table" then
+		ItemScoreData.searchSources.atlasDisabledCrafting = {}
 	end
 	ItemScoreData.searchSources.atlasDungeonMaxMythicLevel = normalizeAtlasDungeonMaxMythicLevel(ItemScoreData.searchSources.atlasDungeonMaxMythicLevel)
 	ItemScoreData.searchSources.atlasRaidMaxDifficulty = normalizeAtlasRaidMaxDifficulty(ItemScoreData.searchSources.atlasRaidMaxDifficulty)
@@ -160,6 +168,25 @@ local function snapshotSettings(settings)
 			local copy = {}
 			for key, value in pairs(settings.atlasDisabledRaids or {}) do
 				copy[key] = value and true or nil
+			end
+			return copy
+		end)(),
+		atlasDisabledFactions = (function()
+			local copy = {}
+			for key, value in pairs(settings.atlasDisabledFactions or {}) do
+				copy[key] = value and true or nil
+			end
+			return copy
+		end)(),
+		atlasDisabledCrafting = (function()
+			local copy = {}
+			for expansionKey, disabledSources in pairs(settings.atlasDisabledCrafting or {}) do
+				if type(disabledSources) == "table" then
+					copy[expansionKey] = {}
+					for sourceName, value in pairs(disabledSources) do
+						copy[expansionKey][sourceName] = value and true or nil
+					end
+				end
 			end
 			return copy
 		end)(),
@@ -221,6 +248,28 @@ local function settingsFingerprint(settings)
 	end
 	table.sort(disabledRaids)
 
+	local disabledFactions = {}
+	for factionName, disabled in pairs(settings.atlasDisabledFactions or {}) do
+		if disabled then
+			local clean = stripColorCodes(factionName)
+			if clean then disabledFactions[#disabledFactions + 1] = clean end
+		end
+	end
+	table.sort(disabledFactions)
+
+	local disabledCrafting = {}
+	for expansionKey, disabledSources in pairs(settings.atlasDisabledCrafting or {}) do
+		if type(disabledSources) == "table" then
+			for sourceName, disabled in pairs(disabledSources) do
+				if disabled then
+					local clean = stripColorCodes(sourceName)
+					if clean then disabledCrafting[#disabledCrafting + 1] = tostring(expansionKey) .. ":" .. clean end
+				end
+			end
+		end
+	end
+	table.sort(disabledCrafting)
+
 	local parts = {
 		settings.useLootCollector and "1" or "0",
 		settings.useAtlasLoot and "1" or "0",
@@ -235,6 +284,8 @@ local function settingsFingerprint(settings)
 		settings.worldforgedNaxx and "1" or "0",
 		table.concat(disabledPlaces, ","),
 		table.concat(disabledRaids, ","),
+		table.concat(disabledFactions, ","),
+		table.concat(disabledCrafting, ","),
 	}
 
 	return table.concat(parts, "|")
@@ -296,7 +347,8 @@ local function createCollector()
 		local fallbackItemLink = trim(metadata.fallbackItemLink)
 		local fallbackItemName = stripColorCodes(metadata.fallbackItemName)
 		local fallbackItemRarity = tonumber(metadata.fallbackItemRarity)
-		if not difficultyLabel and not difficultyRank and not fallbackItemID and not fallbackItemLink and not fallbackItemName and not fallbackItemRarity then return nil end
+		local ignoreClassRestriction = metadata.ignoreClassRestriction and true or false
+		if not difficultyLabel and not difficultyRank and not fallbackItemID and not fallbackItemLink and not fallbackItemName and not fallbackItemRarity and not ignoreClassRestriction then return nil end
 		return {
 			difficultyLabel = difficultyLabel,
 			difficultyRank = difficultyRank,
@@ -304,6 +356,7 @@ local function createCollector()
 			fallbackItemLink = fallbackItemLink,
 			fallbackItemName = fallbackItemName,
 			fallbackItemRarity = fallbackItemRarity,
+			ignoreClassRestriction = ignoreClassRestriction or nil,
 		}
 	end
 
@@ -334,6 +387,9 @@ local function createCollector()
 		end
 		if not existing.fallbackItemRarity and metadata.fallbackItemRarity then
 			existing.fallbackItemRarity = metadata.fallbackItemRarity
+		end
+		if metadata.ignoreClassRestriction then
+			existing.ignoreClassRestriction = true
 		end
 	end
 
@@ -734,16 +790,69 @@ function addon.GetDisabledAtlasLootRaids()
 	return list
 end
 
-function addon.GetAtlasLootRaidChoices()
-	local provider = providers["AtlasLoot"]
-	if not provider or type(provider.GetRaidChoices) ~= "function" then return {} end
+-- Persists one reputation source toggle without changing its expansion filter.
+function addon.SetAtlasLootFactionEnabled(factionName, enabled)
+	local clean = stripColorCodes(factionName)
+	if not clean then return false end
 
 	local settings = ensureSettings()
-	local ok, raidChoices = pcall(provider.GetRaidChoices, settings)
-	if not ok or type(raidChoices) ~= "table" then
+	local disabledFactions = settings.atlasDisabledFactions
+	local current = disabledFactions[clean] and true or false
+	local targetDisabled = not enabled
+	if current == targetDisabled then return false end
+
+	disabledFactions[clean] = targetDisabled or nil
+	runtime.forceRefresh = true
+	return true
+end
+
+-- Persists one crafting profession toggle within its owning expansion.
+function addon.SetAtlasLootCraftingEnabled(expansionKey, sourceName, enabled)
+	expansionKey = trim(tostring(expansionKey or ""))
+	local clean = stripColorCodes(sourceName)
+	if not expansionKey or not clean then return false end
+
+	local settings = ensureSettings()
+	local disabledByExpansion = settings.atlasDisabledCrafting
+	local disabledSources = disabledByExpansion[expansionKey]
+	local current = type(disabledSources) == "table" and disabledSources[clean] and true or false
+	local targetDisabled = not enabled
+	if current == targetDisabled then return false end
+
+	if targetDisabled then
+		disabledSources = type(disabledSources) == "table" and disabledSources or {}
+		disabledSources[clean] = true
+		disabledByExpansion[expansionKey] = disabledSources
+	elseif type(disabledSources) == "table" then
+		disabledSources[clean] = nil
+		if next(disabledSources) == nil then disabledByExpansion[expansionKey] = nil end
+	end
+	runtime.forceRefresh = true
+	return true
+end
+
+local function getAtlasLootSourceChoices()
+	local provider = providers["AtlasLoot"]
+	if not provider then return {} end
+	local getChoices = provider.GetSourceChoices or provider.GetRaidChoices
+	if type(getChoices) ~= "function" then return {} end
+
+	local settings = ensureSettings()
+	local ok, sourceChoices = pcall(getChoices, settings)
+	if not ok or type(sourceChoices) ~= "table" then
 		return {}
 	end
-	return raidChoices
+	return sourceChoices
+end
+
+-- Returns all selectable AtlasLoot source categories grouped by expansion.
+function addon.GetAtlasLootSourceChoices()
+	return getAtlasLootSourceChoices()
+end
+
+-- Compatibility for callers that predate Tier Set and Reputation categories.
+function addon.GetAtlasLootRaidChoices()
+	return getAtlasLootSourceChoices()
 end
 
 -- Returns the highest AtlasLoot Mythic+ dungeon level supported by the loaded provider.
@@ -769,23 +878,85 @@ function addon.GetAtlasLootRaidDifficultyChoices()
 	return choices
 end
 
+-- Applies the raid-style bulk toggle to raids and Classic Tier 1-3 sources.
 function addon.SetAllAtlasLootRaidsEnabled(enabled)
 	local settings = ensureSettings()
-	local provider = providers["AtlasLoot"]
-	if not provider or type(provider.GetRaidChoices) ~= "function" then return false end
-
-	local ok, raidChoices = pcall(provider.GetRaidChoices, settings)
-	if not ok or type(raidChoices) ~= "table" then return false end
+	local raidChoices = getAtlasLootSourceChoices()
+	if type(raidChoices) ~= "table" then return false end
 
 	local changed = false
 	for _, group in ipairs(raidChoices) do
-		for _, raidName in ipairs(group.raids or {}) do
+		local raidNames = {}
+		for _, raidName in ipairs(group.raids or {}) do raidNames[#raidNames + 1] = raidName end
+		for _, tierSetName in ipairs(group.tierSets or {}) do raidNames[#raidNames + 1] = tierSetName end
+		for _, raidName in ipairs(raidNames) do
 			local current = settings.atlasDisabledRaids[raidName] and true or false
 			local target = not enabled
 			if current ~= target then
 				settings.atlasDisabledRaids[raidName] = target or nil
 				changed = true
 			end
+		end
+	end
+
+	if changed then
+		runtime.forceRefresh = true
+	end
+
+	return changed
+end
+
+-- Applies a bulk toggle only to loaded reputation sources.
+function addon.SetAllAtlasLootFactionsEnabled(enabled)
+	local settings = ensureSettings()
+	local sourceChoices = getAtlasLootSourceChoices()
+	if type(sourceChoices) ~= "table" then return false end
+
+	local changed = false
+	for _, group in ipairs(sourceChoices) do
+		for _, factionName in ipairs(group.factions or {}) do
+			local current = settings.atlasDisabledFactions[factionName] and true or false
+			local target = not enabled
+			if current ~= target then
+				settings.atlasDisabledFactions[factionName] = target or nil
+				changed = true
+			end
+		end
+	end
+
+	if changed then
+		runtime.forceRefresh = true
+	end
+
+	return changed
+end
+
+-- Applies a bulk toggle only to loaded crafting professions, independently per expansion.
+function addon.SetAllAtlasLootCraftingEnabled(enabled)
+	local settings = ensureSettings()
+	local sourceChoices = getAtlasLootSourceChoices()
+	if type(sourceChoices) ~= "table" then return false end
+
+	local changed = false
+	for _, group in ipairs(sourceChoices) do
+		local expansionKey = tostring(group.key or "")
+		local disabledSources = settings.atlasDisabledCrafting[expansionKey]
+		for _, sourceName in ipairs(group.crafting or {}) do
+			local current = type(disabledSources) == "table" and disabledSources[sourceName] and true or false
+			local target = not enabled
+			if current ~= target then
+				if target then
+					disabledSources = type(disabledSources) == "table" and disabledSources or {}
+					disabledSources[sourceName] = true
+					settings.atlasDisabledCrafting[expansionKey] = disabledSources
+				else
+					disabledSources[sourceName] = nil
+				end
+				changed = true
+			end
+		end
+		if type(disabledSources) == "table" and next(disabledSources) == nil then
+			settings.atlasDisabledCrafting[expansionKey] = nil
 		end
 	end
 
