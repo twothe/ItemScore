@@ -37,10 +37,10 @@ function addon.CreateEditBox(parent, width)
 end
 
 local ARMOR_TYPE_DEFS = {
-	{ key = "cloth", labelGlobal = "ITEM_SUBCLASS_ARMOR_CLOTH", fallback = "Cloth" },
-	{ key = "leather", labelGlobal = "ITEM_SUBCLASS_ARMOR_LEATHER", fallback = "Leather" },
-	{ key = "mail", labelGlobal = "ITEM_SUBCLASS_ARMOR_MAIL", fallback = "Mail" },
-	{ key = "plate", labelGlobal = "ITEM_SUBCLASS_ARMOR_PLATE", fallback = "Plate" },
+	{ key = "cloth", classID = 4, subclassID = 1, fallback = "Cloth" },
+	{ key = "leather", classID = 4, subclassID = 2, fallback = "Leather" },
+	{ key = "mail", classID = 4, subclassID = 3, fallback = "Mail" },
+	{ key = "plate", classID = 4, subclassID = 4, fallback = "Plate" },
 }
 
 local function toLookupKey(value)
@@ -49,18 +49,24 @@ local function toLookupKey(value)
 	return string.lower(text)
 end
 
+-- Client-provided subclass names keep filters valid in every locale.
+local function itemTypeLabel(def)
+	if def.classID then return C_Item.GetItemSubClassInfo(def.classID, def.subclassID) or def.fallback end
+	return _G[def.labelGlobal] or def.fallback
+end
+
 local ARMOR_TYPE_LOOKUP = {}
 for _, def in ipairs(ARMOR_TYPE_DEFS) do
 	ARMOR_TYPE_LOOKUP[def.key] = def.key
 	ARMOR_TYPE_LOOKUP[toLookupKey(def.fallback)] = def.key
-	local localizedKey = toLookupKey(_G[def.labelGlobal])
+	local localizedKey = toLookupKey(itemTypeLabel(def))
 	if localizedKey then ARMOR_TYPE_LOOKUP[localizedKey] = def.key end
 end
 
 function addon.GetArmorTypeOptions()
 	local result = {}
 	for _, def in ipairs(ARMOR_TYPE_DEFS) do
-		local label = _G[def.labelGlobal] or def.fallback
+		local label = itemTypeLabel(def)
 		result[#result + 1] = {
 			key = def.key,
 			label = label,
@@ -74,29 +80,29 @@ function addon.NormalizeArmorType(itemType, subType)
 end
 
 local WEAPON_TYPE_DEFS = {
-	{ key = "one_hand_axe", labelGlobal = "ITEM_SUBCLASS_WEAPON_AXE", fallback = "One-Handed Axes" },
-	{ key = "one_hand_mace", labelGlobal = "ITEM_SUBCLASS_WEAPON_MACE", fallback = "One-Handed Maces" },
-	{ key = "one_hand_sword", labelGlobal = "ITEM_SUBCLASS_WEAPON_SWORD", fallback = "One-Handed Swords" },
-	{ key = "dagger", labelGlobal = "ITEM_SUBCLASS_WEAPON_DAGGER", fallback = "Daggers" },
-	{ key = "fist_weapon", labelGlobal = "ITEM_SUBCLASS_WEAPON_FIST", fallback = "Fist Weapons" },
-	{ key = "two_hand_axe", labelGlobal = "ITEM_SUBCLASS_WEAPON_AXE2", fallback = "Two-Handed Axes" },
-	{ key = "two_hand_mace", labelGlobal = "ITEM_SUBCLASS_WEAPON_MACE2", fallback = "Two-Handed Maces" },
-	{ key = "two_hand_sword", labelGlobal = "ITEM_SUBCLASS_WEAPON_SWORD2", fallback = "Two-Handed Swords" },
-	{ key = "polearm", labelGlobal = "ITEM_SUBCLASS_WEAPON_POLEARM", fallback = "Polearms" },
-	{ key = "staff", labelGlobal = "ITEM_SUBCLASS_WEAPON_STAFF", fallback = "Staves" },
-	{ key = "shield", labelGlobal = "ITEM_SUBCLASS_ARMOR_SHIELD", fallback = "Shields", invType = "INVTYPE_SHIELD" },
+	{ key = "one_hand_axe", classID = 2, subclassID = 0, fallback = "One-Handed Axes" },
+	{ key = "one_hand_mace", classID = 2, subclassID = 4, fallback = "One-Handed Maces" },
+	{ key = "one_hand_sword", classID = 2, subclassID = 7, fallback = "One-Handed Swords" },
+	{ key = "dagger", classID = 2, subclassID = 15, fallback = "Daggers" },
+	{ key = "fist_weapon", classID = 2, subclassID = 13, fallback = "Fist Weapons" },
+	{ key = "two_hand_axe", classID = 2, subclassID = 1, fallback = "Two-Handed Axes" },
+	{ key = "two_hand_mace", classID = 2, subclassID = 5, fallback = "Two-Handed Maces" },
+	{ key = "two_hand_sword", classID = 2, subclassID = 8, fallback = "Two-Handed Swords" },
+	{ key = "polearm", classID = 2, subclassID = 6, fallback = "Polearms" },
+	{ key = "staff", classID = 2, subclassID = 10, fallback = "Staves" },
+	{ key = "shield", classID = 4, subclassID = 6, fallback = "Shields", invType = "INVTYPE_SHIELD" },
 	{ key = "off_hand", labelGlobal = "INVTYPE_HOLDABLE", fallback = "Held In Off-Hand", invType = "INVTYPE_HOLDABLE" },
-	{ key = "bow", labelGlobal = "ITEM_SUBCLASS_WEAPON_BOW", fallback = "Bows" },
-	{ key = "gun", labelGlobal = "ITEM_SUBCLASS_WEAPON_GUN", fallback = "Guns" },
-	{ key = "crossbow", labelGlobal = "ITEM_SUBCLASS_WEAPON_CROSSBOW", fallback = "Crossbows" },
-	{ key = "thrown", labelGlobal = "ITEM_SUBCLASS_WEAPON_THROWN", fallback = "Thrown" },
-	{ key = "wand", labelGlobal = "ITEM_SUBCLASS_WEAPON_WAND", fallback = "Wands" },
+	{ key = "bow", classID = 2, subclassID = 2, fallback = "Bows" },
+	{ key = "gun", classID = 2, subclassID = 3, fallback = "Guns" },
+	{ key = "crossbow", classID = 2, subclassID = 18, fallback = "Crossbows" },
+	{ key = "thrown", classID = 2, subclassID = 16, fallback = "Thrown" },
+	{ key = "wand", classID = 2, subclassID = 19, fallback = "Wands" },
 }
 
 local WEAPON_SUBTYPE_LOOKUP = {}
 local WEAPON_INVTYPE_LOOKUP = {}
 for _, def in ipairs(WEAPON_TYPE_DEFS) do
-	local localized = _G[def.labelGlobal]
+	local localized = itemTypeLabel(def)
 	local localizedKey = toLookupKey(localized)
 	if localizedKey then
 		WEAPON_SUBTYPE_LOOKUP[localizedKey] = def.key
@@ -113,7 +119,7 @@ end
 function addon.GetWeaponTypeOptions()
 	local result = {}
 	for _, def in ipairs(WEAPON_TYPE_DEFS) do
-		local label = _G[def.labelGlobal] or def.fallback
+		local label = itemTypeLabel(def)
 		result[#result + 1] = {
 			key = def.key,
 			label = label,
@@ -127,7 +133,7 @@ function addon.IsWeaponTypeFilterRelevant(itemType, invType)
 		return true
 	end
 	local itemTypeKey = toLookupKey(itemType)
-	local weaponClassKey = toLookupKey(_G.ITEM_CLASS_WEAPON or "Weapon")
+	local weaponClassKey = toLookupKey(C_Item.GetItemClassInfo(2))
 	return itemTypeKey == "weapon" or (weaponClassKey and itemTypeKey == weaponClassKey)
 end
 
@@ -161,100 +167,6 @@ function addon.TuneAdaptiveBudget(currentBudget, elapsedMs, targetMs, minBudget,
 	if budget < minValue then budget = minValue end
 	if budget > maxValue then budget = maxValue end
 	return budget
-end
-
-local INVENTORY_TYPE_BY_ID = {
-	[1] = "INVTYPE_HEAD",
-	[2] = "INVTYPE_NECK",
-	[3] = "INVTYPE_SHOULDER",
-	[4] = "INVTYPE_BODY",
-	[5] = "INVTYPE_CHEST",
-	[6] = "INVTYPE_WAIST",
-	[7] = "INVTYPE_LEGS",
-	[8] = "INVTYPE_FEET",
-	[9] = "INVTYPE_WRIST",
-	[10] = "INVTYPE_HAND",
-	[11] = "INVTYPE_FINGER",
-	[12] = "INVTYPE_TRINKET",
-	[13] = "INVTYPE_WEAPON",
-	[14] = "INVTYPE_SHIELD",
-	[15] = "INVTYPE_RANGED",
-	[16] = "INVTYPE_CLOAK",
-	[17] = "INVTYPE_2HWEAPON",
-	[18] = "INVTYPE_BAG",
-	[19] = "INVTYPE_TABARD",
-	[20] = "INVTYPE_ROBE",
-	[21] = "INVTYPE_WEAPONMAINHAND",
-	[22] = "INVTYPE_WEAPONOFFHAND",
-	[23] = "INVTYPE_HOLDABLE",
-	[24] = "INVTYPE_AMMO",
-	[25] = "INVTYPE_THROWN",
-	[26] = "INVTYPE_RANGEDRIGHT",
-	[27] = "INVTYPE_QUIVER",
-	[28] = "INVTYPE_RELIC",
-}
-
-local function itemIDFromValue(value)
-	local numeric = tonumber(value)
-	if numeric and numeric > 0 then return numeric end
-	if type(value) ~= "string" then return nil end
-	return tonumber(string.match(value, "item:(%d+)"))
-end
-
-local function createAscensionItem(itemID)
-	local itemFactory = _G.Item
-	if type(itemFactory) ~= "table" or type(itemFactory.CreateFromID) ~= "function" then return nil end
-	local ok, itemObject = pcall(itemFactory.CreateFromID, itemFactory, itemID)
-	if ok then return itemObject end
-	return nil
-end
-
-local function callItemMethod(itemObject, methodName)
-	local method = itemObject and itemObject[methodName]
-	if type(method) ~= "function" then return nil end
-	local ok, value = pcall(method, itemObject)
-	if ok then return value end
-	return nil
-end
-
--- Returns the legacy GetItemInfo tuple, with Ascension's Item API as the
--- authoritative fallback for custom difficulty IDs absent from the WDB cache.
-function addon.GetItemInfoCompat(value)
-	local name, link, rarity, itemLevel, requiredLevel, itemType, subType, stackCount, invType, icon, sellPrice = GetItemInfo(value)
-	if name then
-		return name, link, rarity, itemLevel, requiredLevel, itemType, subType, stackCount, invType, icon, sellPrice
-	end
-
-	local itemID = itemIDFromValue(value)
-	if not itemID then return nil end
-	local itemObject = createAscensionItem(itemID)
-	local info = callItemMethod(itemObject, "GetInfoInstant")
-	if type(info) ~= "table" or not info.name then return nil end
-
-	local resolvedLink = info.link or callItemMethod(itemObject, "GetLink")
-	local classID = tonumber(info.classID)
-	local subclassID = tonumber(info.subclassID)
-	local className = info.className or (classID and _G["ITEM_CLASS_" .. tostring(classID)])
-	local subclassName = info.subclassName
-	if not subclassName and classID and subclassID then
-		subclassName = _G["ITEM_SUBCLASS_" .. tostring(classID) .. "_" .. tostring(subclassID)]
-	end
-	local equipLocation = info.equipLoc or info.inventoryTypeName
-	if not equipLocation or not string.match(tostring(equipLocation), "^INVTYPE_") then
-		equipLocation = INVENTORY_TYPE_BY_ID[tonumber(info.inventoryType)]
-	end
-
-	return info.name,
-		resolvedLink or ("item:" .. tostring(itemID) .. ":::::::::"),
-		tonumber(info.quality) or 0,
-		tonumber(info.itemLevel) or 0,
-		tonumber(info.requiredLevel) or 0,
-		className,
-		subclassName,
-		tonumber(info.stackCount or info.maxStack) or 1,
-		equipLocation,
-		info.icon or info.iconFileID,
-		tonumber(info.sellPrice) or 0
 end
 
 local armorAllowed = {
@@ -311,100 +223,6 @@ local armorAllowed = {
 local classCheckTip = CreateFrame("GameTooltip", "IS_ClassCheckTip", nil, "GameTooltipTemplate")
 classCheckTip:SetOwner(UIParent, "ANCHOR_NONE")
 
-local difficultyTip = CreateFrame("GameTooltip", "IS_DifficultyTip", nil, "GameTooltipTemplate")
-difficultyTip:SetOwner(UIParent, "ANCHOR_NONE")
-
-local function escapeLuaPattern(text)
-	return (tostring(text or ""):gsub("([%(%)%.%%%+%-%*%?%[%]%^%$])", "%%%1"))
-end
-
-local function cleanTooltipText(text)
-	text = tostring(text or "")
-	text = string.gsub(text, "|c%x%x%x%x%x%x%x%x", "")
-	text = string.gsub(text, "|r", "")
-	text = string.gsub(text, "^%s+", "")
-	text = string.gsub(text, "%s+$", "")
-	text = string.gsub(text, "%s+", " ")
-	if text == "" then return nil end
-	return text
-end
-
-local function tooltipLineText(tooltip, lineIndex)
-	local tooltipName = tooltip and tooltip.GetName and tooltip:GetName()
-	if not tooltipName then return nil end
-	local line = _G[tooltipName .. "TextLeft" .. tostring(lineIndex)]
-	if not line or type(line.GetText) ~= "function" then return nil end
-	return cleanTooltipText(line:GetText())
-end
-
-local function parseMythicPlusLevel(text)
-	local patterns = {
-		"[Mm]ythic%s*%+%s*(%d+)",
-		"[Mm]ythic%s+[Ll]evel%s+(%d+)",
-		"[Mm]ythic%s+(%d+)",
-		"[Mm]%s*%+%s*(%d+)",
-	}
-	for _, pattern in ipairs(patterns) do
-		local level = tonumber(string.match(text, pattern))
-		if level and level > 0 then
-			return math.floor(level)
-		end
-	end
-	return nil
-end
-
-local function parseDifficultyText(text)
-	text = cleanTooltipText(text)
-	if not text then return nil end
-
-	local mythicPlusLevel = parseMythicPlusLevel(text)
-	if mythicPlusLevel then
-		return {
-			difficultyLabel = "M+" .. tostring(mythicPlusLevel),
-			difficultyRank = 5 + mythicPlusLevel,
-		}
-	end
-
-	local normalized = string.lower(text)
-	normalized = string.gsub(normalized, "^difficulty:%s*", "")
-	normalized = string.gsub(normalized, "^mode:%s*", "")
-	normalized = string.gsub(normalized, "%s+mode$", "")
-	normalized = strtrim(normalized)
-
-	if normalized == "ascended" then
-		return { difficultyLabel = "Asc", difficultyRank = 6 }
-	end
-	if normalized == "mythic" then
-		return { difficultyLabel = "M", difficultyRank = 5 }
-	end
-	if normalized == "heroic" then
-		return { difficultyLabel = "HC", difficultyRank = 4 }
-	end
-	if normalized == "normal" then
-		return { difficultyLabel = "N", difficultyRank = 3 }
-	end
-	return nil
-end
-
--- Returns authoritative item difficulty metadata from rendered tooltip text when present.
-function addon.GetTooltipDifficultyInfo(tooltip)
-	if not tooltip or type(tooltip.NumLines) ~= "function" then return nil end
-	for lineIndex = 2, tooltip:NumLines() do
-		local info = parseDifficultyText(tooltipLineText(tooltip, lineIndex))
-		if info then return info end
-	end
-	return nil
-end
-
--- Renders a hidden tooltip for an item link and extracts the displayed item difficulty.
-function addon.GetItemTooltipDifficultyInfo(itemLink)
-	if not itemLink then return nil end
-	difficultyTip:ClearLines()
-	local ok = pcall(difficultyTip.SetHyperlink, difficultyTip, itemLink)
-	if not ok then return nil end
-	return addon.GetTooltipDifficultyInfo(difficultyTip)
-end
-
 local function classListContains(classListText, localizedClassName)
 	if type(classListText) ~= "string" or type(localizedClassName) ~= "string" then
 		return false
@@ -424,24 +242,20 @@ local function normalizedEquipArmorKey(itemType, subType, equipLoc)
 	return addon.NormalizeArmorType(itemType, subType)
 end
 
--- Checks tooltip class restrictions and native armor eligibility. Callers may
--- skip only the tooltip class restriction for explicitly class-agnostic sources.
-function addon.CanPlayerEquip(itemLink, options)
-	local name, _, _, _, reqLevel, itemType, subType, _, equipLoc = addon.GetItemInfoCompat(itemLink)
+-- Checks native armor eligibility and the localized class restriction tooltip line.
+function addon.CanPlayerEquip(itemLink)
+	local name, _, _, _, reqLevel, itemType, subType, _, equipLoc = addon.Query.GetItemInfo(itemLink)
 	if not name or equipLoc == "" then return false end
 
 	local pLoc, pKey = UnitClass("player")
-	if not (type(options) == "table" and options.ignoreClassRestriction) then
-		classCheckTip:ClearLines()
-		classCheckTip:SetHyperlink(itemLink)
-		local localizedClassesLabel = tostring(_G.ITEM_CLASSES_ALLOWED or "Classes")
-		localizedClassesLabel = string.gsub(localizedClassesLabel, "%s*:%s*$", "")
-		local classesPattern = "^" .. escapeLuaPattern(localizedClassesLabel) .. ":?%s*(.+)"
-		for i = 2, classCheckTip:NumLines() do
-			local txt = _G["IS_ClassCheckTipTextLeft" .. i]:GetText()
-			local list = txt and txt:match(classesPattern)
-			if list and not classListContains(list, pLoc) then return false end
-		end
+	classCheckTip:ClearLines()
+	classCheckTip:SetHyperlink(itemLink)
+	local label = ITEM_CLASSES_ALLOWED:gsub("([%(%)%.%%%+%-%*%?%[%]%^%$])", "%%%1"):gsub("%%%%s", "(.+)")
+	for i = 2, classCheckTip:NumLines() do
+		local line = _G["IS_ClassCheckTipTextLeft" .. i]
+		local text = line and line:GetText()
+		local list = text and text:gsub("|c%x%x%x%x%x%x%x%x", ""):gsub("|r", ""):match("^" .. label .. "$")
+		if list and not classListContains(list, pLoc) then return false end
 	end
 
 	local armorKey = normalizedEquipArmorKey(itemType, subType, equipLoc)
@@ -455,7 +269,7 @@ function addon.CanPlayerEquip(itemLink, options)
 end
 
 function addon.GetInventoryType(itemLink)
-	local _, _, _, _, _, _, _, _, invType = addon.GetItemInfoCompat(itemLink)
+	local _, _, _, _, _, _, _, _, invType = addon.Query.GetItemInfo(itemLink)
 	if (invType == nil or strtrim(invType) == "") then
 		return nil
 	else

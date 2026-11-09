@@ -1,236 +1,167 @@
-local addonName, addon = ...
-
--- Bounded asynchronous item-info warmer used by search when custom item IDs resolve slowly.
-
+-- Loads item data and retains successful reads for the session across client cache eviction.
+local _, addon = ...
 local Query = {}
 addon.Query = Query
-
---------------------------------------------------
--- internal state
---------------------------------------------------
-local queue = {}
-local queued = {}
-local queryAttempts = {}
-local queueHead = 1
-local queueTail = 0
-local QUERY_TIMEOUT_SECONDS = 20
-local QUERY_WAIT_AFTER_SECONDS = 1.5
-local QUERY_MAX_ATTEMPTS_PER_ITEM = 2
-local QUERY_UNRESOLVED_RETRY_SECONDS = 5 * 60
-local QUERY_START_ITEMS_PER_FRAME = 1
-local QUERY_MIN_ITEMS_PER_FRAME = 1
-local QUERY_MAX_ITEMS_PER_FRAME = 250
-local QUERY_TARGET_FRAME_FRACTION = 0.12
-local QUERY_MIN_FRAME_BUDGET_MS = 0.75
-local QUERY_MAX_FRAME_BUDGET_MS = 4
-
-local hiddenTooltip = CreateFrame("GameTooltip", "ISQHiddenTooltip", nil, "GameTooltipTemplate")
-hiddenTooltip:SetOwner(UIParent, "ANCHOR_NONE")
-
+local TIMEOUT, COOLDOWN, MAX_ATTEMPTS = 8, 300, 2
+local watched, pending, listeners, doneListeners = {}, {}, {}, {}
+local pendingCount, elapsedSinceUpdate = 0, 0
 local driver = CreateFrame("Frame")
-local listeners = {}
-local isSearching = false
-local searchTimeWaitAfter = 0
-local searchStartedAt = 0
-local queryItemsPerFrame = QUERY_START_ITEMS_PER_FRAME
+local requestsSuppressed = false
+local itemInfoCache, itemStatsCache = {}, {}
 
-local function process(id)
-	if not id then return end
-	local itemFactory = _G.Item
-	if type(itemFactory) == "table" and type(itemFactory.CreateFromID) == "function" then
-		local ok, itemObject = pcall(itemFactory.CreateFromID, itemFactory, id)
-		if ok and itemObject and type(itemObject.Query) == "function" then
-			pcall(itemObject.Query, itemObject)
-		end
-	end
-	pcall(hiddenTooltip.SetHyperlink, hiddenTooltip, "item:" .. id .. ":::::::::")
+-- Preserve the complete item string: variants must not inherit base-item attributes.
+local function cacheKey(value)
+    if type(value) == "number" then return "item:" .. value end
+    if type(value) ~= "string" then return nil end
+    return value:match("|H(item:[^|]+)|h") or value
 end
 
-local function nowSeconds()
-	if type(GetTime) == "function" then
-		return GetTime()
-	end
-	return 0
+local function pack(...)
+    return { n = select("#", ...), ... }
 end
 
-local function nowMillis()
-	if type(debugprofilestop) == "function" then
-		return debugprofilestop()
-	end
-	return nowSeconds() * 1000
+-- Prefer fresh client data; only successful reads may populate the session cache.
+function Query.GetItemInfo(value)
+    local key = cacheKey(value)
+    local info = pack(C_Item.GetItemInfo(value))
+    if info[1] then
+        if key then itemInfoCache[key] = info end
+        local linkKey = cacheKey(info[2])
+        if linkKey then itemInfoCache[linkKey] = info end
+    else
+        info = key and itemInfoCache[key]
+    end
+    if info then return unpack(info, 1, info.n) end
 end
 
-local function hasQueuedItems()
-	return queueHead <= queueTail
+-- Returned attribute tables are read-only to callers. Empty tables are valid data.
+function Query.GetItemStats(value)
+    local key = cacheKey(value)
+    local stats = C_Item.GetItemStats(value)
+    if stats then
+        local snapshot = {}
+        for stat, amount in pairs(stats) do snapshot[stat] = amount end
+        if key then
+            itemStatsCache[key] = snapshot
+            local info = itemInfoCache[key]
+            local linkKey = info and cacheKey(info[2])
+            if linkKey then itemStatsCache[linkKey] = snapshot end
+        end
+        return snapshot
+    end
+    return key and itemStatsCache[key]
 end
 
-local function currentFrameBudgetMs()
-	local frameMs = 16.7
-	if type(GetFramerate) == "function" then
-		local fps = tonumber(GetFramerate()) or 0
-		if fps > 0 then
-			frameMs = 1000 / fps
-		end
-	end
-
-	local budgetMs = frameMs * QUERY_TARGET_FRAME_FRACTION
-	if budgetMs < QUERY_MIN_FRAME_BUDGET_MS then budgetMs = QUERY_MIN_FRAME_BUDGET_MS end
-	if budgetMs > QUERY_MAX_FRAME_BUDGET_MS then budgetMs = QUERY_MAX_FRAME_BUDGET_MS end
-	return budgetMs
+-- A cache-driven search may read item data but must never start another load batch.
+function Query.TryWithoutRequests(callback, ...)
+    local previous = requestsSuppressed
+    requestsSuppressed = true
+    local ok, result = pcall(callback, ...)
+    requestsSuppressed = previous
+    return ok, result
 end
 
-local function tuneQueryItemsPerFrame(processed, elapsedMs, targetMs)
-	if processed <= 0 then return end
-
-	local budget = queryItemsPerFrame
-	if elapsedMs <= 0 then
-		budget = math.floor((budget * 1.6) + 0.5)
-	elseif elapsedMs < (targetMs * 0.55) then
-		budget = math.floor((budget * 1.5) + 0.5)
-	elseif elapsedMs < (targetMs * 0.85) then
-		budget = budget + math.max(1, math.floor(budget * 0.20))
-	elseif elapsedMs > (targetMs * 1.50) then
-		budget = math.floor((budget * 0.50) + 0.5)
-	elseif elapsedMs > (targetMs * 1.10) then
-		budget = math.floor((budget * 0.80) + 0.5)
-	end
-
-	if budget < QUERY_MIN_ITEMS_PER_FRAME then budget = QUERY_MIN_ITEMS_PER_FRAME end
-	if budget > QUERY_MAX_ITEMS_PER_FRAME then budget = QUERY_MAX_ITEMS_PER_FRAME end
-	queryItemsPerFrame = budget
+local function itemID(value)
+    local id = type(value) == "number" and value or tonumber(tostring(value):match("item:(%d+)"))
+    if id and id > 0 and id == math.floor(id) then return id end
 end
 
-local function clearPendingQueue(markUnresolved)
-	local currentTime = nowSeconds()
-	for i = queueHead, queueTail do
-		local itemID = queue[i]
-		if itemID then
-			queued[itemID] = nil
-			if markUnresolved then
-				queryAttempts[itemID] = {
-					count = QUERY_MAX_ATTEMPTS_PER_ITEM,
-					lastAttemptAt = currentTime,
-				}
-			end
-		end
-		queue[i] = nil
-	end
-	queueHead = 1
-	queueTail = 0
+local function readiness(id)
+    if not Query.GetItemInfo(id) then return 0 end
+    if not Query.GetItemStats("item:" .. id) then return 1 end
+    return 2
 end
 
-local function notifyListeners()
-	if #listeners == 0 then
-		return
-	end
-
-	-- Swap listener table before callbacks to keep re-entrant registrations.
-	local pendingListeners = listeners
-	listeners = {}
-	for _, cb in ipairs(pendingListeners) do
-		local ok, err = pcall(cb)
-		if not ok and type(geterrorhandler) == "function" then
-			geterrorhandler()(err)
-		end
-	end
+local function notify(list, ...)
+    for _, callback in ipairs(list) do
+        local ok, err = pcall(callback, ...)
+        if not ok then geterrorhandler()("ItemScore item-data callback: " .. tostring(err)) end
+    end
 end
 
-local function finishSearch(forceTimeout)
-	isSearching = false
-	searchStartedAt = 0
-	searchTimeWaitAfter = 0
-	queryItemsPerFrame = QUERY_START_ITEMS_PER_FRAME
-	driver:Hide()
-
-	if forceTimeout then
-		clearPendingQueue(true)
-		print(string.format("|cffff7f00ItemScore:|r item-info fetching timed out after %d seconds. Search was reset.", QUERY_TIMEOUT_SECONDS))
-	end
-
-	notifyListeners()
+local function removePending(id)
+    if pending[id] then pending[id] = nil; pendingCount = pendingCount - 1 end
 end
 
-driver:SetScript("OnUpdate", function(_, elapsed)
-	if isSearching and searchStartedAt > 0 then
-		local elapsedSearch = nowSeconds() - searchStartedAt
-		if elapsedSearch >= QUERY_TIMEOUT_SECONDS then
-			finishSearch(true)
-			return
-		end
-	end
+local function observe(id)
+    local record = watched[id]
+    if not record then return end
+    local ready = readiness(id)
+    if ready > record.ready then
+        record.ready = ready
+        notify(listeners, id)
+    end
+    if ready == 2 then
+        removePending(id)
+        watched[id] = nil
+    end
+    return ready
+end
 
-	if not hasQueuedItems() then
-		searchTimeWaitAfter = searchTimeWaitAfter - elapsed
-		if (searchTimeWaitAfter <= 0) then
-			finishSearch(false)
-		end
-	else
-		local startMs = nowMillis()
-		local targetMs = currentFrameBudgetMs()
-		local itemBudget = queryItemsPerFrame
-		local processed = 0
-		while hasQueuedItems() do
-			local id = queue[queueHead]
-			queue[queueHead] = nil
-			queueHead = queueHead + 1
-			if id then
-				queued[id] = nil
-				process(id)
-				processed = processed + 1
-			end
-			if processed >= itemBudget then break end
-			if nowMillis() - startMs >= targetMs then break end
-		end
-		tuneQueryItemsPerFrame(processed, nowMillis() - startMs, targetMs)
-		if not hasQueuedItems() then
-			queueHead = 1
-			queueTail = 0
-		end
-	end
+local function finishBatch()
+    if pendingCount ~= 0 then return end
+    driver:SetScript("OnUpdate", nil)
+    local callbacks = doneListeners
+    doneListeners = {}
+    notify(callbacks)
+end
+
+local function update(_, elapsed)
+    elapsedSinceUpdate = elapsedSinceUpdate + elapsed
+    if elapsedSinceUpdate < 0.1 then return end
+    elapsedSinceUpdate = 0
+    local now, sent = GetTime(), 0
+    for id, record in pairs(pending) do
+        if observe(id) ~= 2 and now >= record.nextRequest then
+            if record.attempts >= MAX_ATTEMPTS then
+                removePending(id)
+            elseif sent < 40 then
+                record.attempts = record.attempts + 1
+                record.nextRequest = now + TIMEOUT
+                sent = sent + 1
+                C_Item.RequestLoadItemDataByID(id)
+            end
+        end
+    end
+    finishBatch()
+end
+
+-- Deduplicates requests; a failed batch can be retried after five minutes or next login.
+function Query.Add(value)
+    if requestsSuppressed then return false end
+    local id = itemID(value)
+    if not id then return false end
+    if pending[id] then return true end
+    local ready = readiness(id)
+    if ready == 2 then return false end
+    local now = GetTime()
+    local record = watched[id]
+    if record and now < record.retryAt then return false end
+    record = { ready = ready, attempts = 0, nextRequest = now, retryAt = now + COOLDOWN }
+    watched[id], pending[id] = record, record
+    pendingCount = pendingCount + 1
+    driver:SetScript("OnUpdate", update)
+    return true
+end
+
+function Query.IsBusy() return pendingCount > 0 end
+
+-- Batch completion includes failure/timeout and does not imply data availability.
+function Query.RegisterDone(callback)
+    assert(type(callback) == "function", "Item-data completion callback required")
+    if Query.IsBusy() then doneListeners[#doneListeners + 1] = callback else callback() end
+end
+
+-- Persistent readiness notifications include successes arriving after a timeout.
+function Query.Subscribe(callback)
+    assert(type(callback) == "function", "Item-data callback required")
+    listeners[#listeners + 1] = callback
+end
+
+driver:RegisterEvent("ITEM_DATA_LOAD_RESULT")
+driver:RegisterEvent("GET_ITEM_INFO_RECEIVED")
+driver:SetScript("OnEvent", function(_, _, id, success)
+    local record = watched[id]
+    if success and record then observe(id) end
+    finishBatch()
 end)
-
-driver:Hide()
-
---------------------------------------------------
--- public API
---------------------------------------------------
-function Query.Add(id)
-	local itemID = tonumber(id)
-	if not itemID or itemID <= 0 then return false end
-	if queued[itemID] then return true end
-
-	local currentTime = nowSeconds()
-	local attempts = queryAttempts[itemID]
-	if attempts and attempts.count >= QUERY_MAX_ATTEMPTS_PER_ITEM then
-		local retryAt = (attempts.lastAttemptAt or 0) + QUERY_UNRESOLVED_RETRY_SECONDS
-		if currentTime < retryAt then
-			return false
-		end
-		attempts.count = 0
-	end
-
-	if not isSearching then
-		searchStartedAt = currentTime
-	end
-	isSearching = true
-	searchTimeWaitAfter = QUERY_WAIT_AFTER_SECONDS
-	attempts = attempts or { count = 0, lastAttemptAt = 0 }
-	attempts.count = attempts.count + 1
-	attempts.lastAttemptAt = currentTime
-	queryAttempts[itemID] = attempts
-	queued[itemID] = true
-	queueTail = queueTail + 1
-	queue[queueTail] = itemID
-	driver:Show()
-	return true
-end
-
-function Query.RegisterDone(cb)
-	if not Query.IsBusy() then
-		cb()
-	else
-		table.insert(listeners, cb)
-	end
-end
-
-function Query.IsBusy() return isSearching end

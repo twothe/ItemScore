@@ -2,7 +2,7 @@
 
 [![Latest Release](https://img.shields.io/github/v/release/twothe/ItemScore?label=Latest%20Release)](https://github.com/twothe/ItemScore/releases/latest)
 
-`ItemScore` is a WoW addon for **3.3.5a** WoW client focused on Ascension Bronzebart players who want faster loot decisions.
+`ItemScore` is a WoW addon for WoW Forever client that finds BIS items based on your own scores right in-game.
 
 ## What It Does
 - Calculates an item score based on your own stat weights.
@@ -13,10 +13,9 @@
 - Provides a movable and freely resizable search window with adaptive result columns.
 
 ## Data Providers
-- `LootCollector`
 - `AtlasLoot`
 
-You can configure which providers to use. AtlasLoot search data supports both legacy AtlasLoot data and the Ascension 8.x beta layout, configurable dungeon and raid difficulty limits, a default highest-only Mythic+ result mode, and expansion-grouped selection of raids, Classic Tier 1-3 sets, loaded reputation rewards, and loaded crafting professions in `/itemscore` -> `Loot Sources`. LootCollector Worldforged filters cover ZG/MC/BWL/Naxxramas inclusively from ZG through the highest selected tier, and unresolved tier IDs fall back to the original LootCollector Worldforged discovery while the client item cache catches up.
+You can configure the loot provider to show only items from a specific raid, tier, source or other limitations. By default it shows everything, which might include items that are unobtainable as of the current state of the game. 
 
 ## Installation
 1. Download the ZIP from [Releases](https://github.com/twothe/ItemScore/releases/latest).
@@ -35,12 +34,6 @@ You can configure which providers to use. AtlasLoot search data supports both le
 
 ## Addon Commands
 - `/is status` (cache/provider status)
-- `/is lootcollector on|off`
-- `/is atlas on|off`
-- `/is atlas classic on|off`
-- `/is atlas tbc on|off`
-- `/is atlas wrath on|off`
-- `/is atlas raid on|off`
 - `/is atlas place on <Area Name>`
 - `/is atlas place off <Area Name>`
 - `/is atlas place list`

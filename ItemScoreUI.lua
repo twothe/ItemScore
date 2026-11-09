@@ -1,3 +1,4 @@
+-- Profile editing and AtlasLoot source selection in Blizzard Settings.
 local addonName, addon = ...
 local U = addon
 
@@ -7,16 +8,12 @@ local U = addon
 local HEADER_HEIGHT = 24
 
 local function setButtonEnabled(btn, enabled)
-	if btn.SetEnabled then
-		btn:SetEnabled(enabled)
-	else
-		if enabled then btn:Enable() else btn:Disable() end
-	end
+	btn:SetEnabled(enabled)
 end
 
--- Creates a restrained visual group for dense legacy Interface Options panels.
+-- Creates a restrained visual group for dense settings panels.
 local function createOptionsGroup(parent)
-	local group = CreateFrame("Frame", nil, parent)
+	local group = CreateFrame("Frame", nil, parent, "BackdropTemplate")
 	group:SetBackdrop({
 		bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
 		edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
@@ -31,7 +28,7 @@ local function createOptionsGroup(parent)
 end
 
 -- Programmatic SetText calls can retain a stale horizontal viewport on this
--- legacy client. Resetting the cursor exposes the beginning of the value.
+-- client. Resetting the cursor exposes the beginning of the value.
 local function setEditBoxText(editBox, value)
 	editBox:SetText(value)
 	if editBox.SetCursorPosition then
@@ -44,9 +41,6 @@ local STAT_FIELD_HEIGHT = 24
 local STATS_LEFT_PAD = 16
 local STAT_FIRST_COL_X = STATS_LEFT_PAD
 local STAT_SECOND_COL_X = STATS_LEFT_PAD + 240
-local DUNGEON_MAX_MYTHIC_LEVEL_FALLBACK = 40
-local SOURCE_ROW_HEIGHT = 22
-local SOURCE_LIST_INSET = 8
 
 local STAT_LABEL_OVERRIDES = {
 	ITEM_MOD_DAMAGE_PER_SECOND_SHORT = "Weapon DPS",
@@ -85,7 +79,7 @@ local function showAddProfilePopup(refreshCallback)
 		hasEditBox = true,
 		maxLetters = 12,
 		OnAccept = function(pop)
-            local name = pop.editBox:GetText()
+            local name = pop:GetEditBox():GetText()
             if name and name ~= "" then
                 if addon.AddProfile(name) then
                     refreshCallback()
@@ -176,12 +170,7 @@ end
 
 function ProfileComponent:buildStats()
 	self.statsFrame = CreateFrame("Frame", nil, self.root)
-	if DEBUG_BACKDROP then
-		self.statsFrame:SetBackdrop({
-			bgFile = "Interface/Tooltips/UI-Tooltip-Background"
-		})
-		self.statsFrame:SetBackdropColor(0, 1, 0, 0.3)
-	end
+
 	self.statsFrame:SetPoint("TOPLEFT", self.root, "TOPLEFT", 0, -HEADER_HEIGHT - 9)
 	self.statsFrame:SetPoint("RIGHT", self.root, "RIGHT", -STATS_LEFT_PAD, 0)
 	self.statsFrame:SetWidth(self.root:GetWidth())
@@ -385,7 +374,7 @@ end
 -- Options Panels
 --------------------------------------------------
 
-local RootPanel = CreateFrame("Frame", "ItemScoreRootOptionsFrame", InterfaceOptionsFramePanelContainer or UIParent)
+local RootPanel = CreateFrame("Frame", "ItemScoreRootOptionsFrame", UIParent)
 RootPanel.name = "ItemScore"
 
 RootPanel:SetScript("OnShow", function(self)
@@ -402,9 +391,10 @@ RootPanel:SetScript("OnShow", function(self)
 	text:SetText("Use the two pages below:\n- Scores: profile weights\n- Loot Sources: search data providers and filters")
 end)
 
-InterfaceOptions_AddCategory(RootPanel)
+local rootCategory = Settings.RegisterCanvasLayoutCategory(RootPanel, "ItemScore")
+Settings.RegisterAddOnCategory(rootCategory)
 
-local ScorePanel = CreateFrame("Frame", "ItemScoreOptionsFrame", InterfaceOptionsFramePanelContainer or UIParent)
+local ScorePanel = CreateFrame("Frame", "ItemScoreOptionsFrame", UIParent)
 ScorePanel.name = "Scores"
 ScorePanel.parent = "ItemScore"
 
@@ -489,718 +479,69 @@ ScorePanel:SetScript("OnShow", function(self)
 	self:refreshAll()
 end)
 
-InterfaceOptions_AddCategory(ScorePanel)
+local scoreCategory = Settings.RegisterCanvasLayoutSubcategory(rootCategory, ScorePanel, "Scores")
 
-local SourcesPanel = CreateFrame("Frame", "ItemScoreSourcesOptionsFrame", InterfaceOptionsFramePanelContainer or UIParent)
-SourcesPanel.name = "Loot Sources"
-SourcesPanel.parent = "ItemScore"
+local SourcesPanel = CreateFrame("Frame", "ItemScoreSourcesOptionsFrame", UIParent)
+Settings.RegisterCanvasLayoutSubcategory(rootCategory, SourcesPanel, "Loot Sources")
+local sourceTitle = SourcesPanel:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
+sourceTitle:SetPoint("TOPLEFT", 16, -16)
+sourceTitle:SetText("AtlasLoot Forever")
+local enabled = U.CreateCheckButton(SourcesPanel, "Use AtlasLoot Forever for item searches")
+enabled:SetPoint("TOPLEFT", 16, -44)
+enabled:SetScript("OnClick", function(self) addon.SetSearchSourceOption("useAtlasLoot", self:GetChecked()) end)
+local refreshButton = U.CreateButton(SourcesPanel, 130, 24, "Refresh catalogue")
+refreshButton:SetPoint("TOPLEFT", 16, -78)
+refreshButton:SetScript("OnClick", function() addon.RefreshSearchCache(true, false) end)
+local allButton = U.CreateButton(SourcesPanel, 90, 24, "Select all")
+allButton:SetPoint("LEFT", refreshButton, "RIGHT", 12, 0)
+local noneButton = U.CreateButton(SourcesPanel, 90, 24, "Clear all")
+noneButton:SetPoint("LEFT", allButton, "RIGHT", 8, 0)
+local sourceStatus = SourcesPanel:CreateFontString(nil, "ARTWORK", "GameFontHighlight")
+sourceStatus:SetPoint("TOPLEFT", 16, -112)
+sourceStatus:SetPoint("RIGHT", SourcesPanel, "RIGHT", -24, 0)
+sourceStatus:SetJustifyH("LEFT")
+local sourceScroll = CreateFrame("ScrollFrame", nil, SourcesPanel, "UIPanelScrollFrameTemplate")
+sourceScroll:SetPoint("TOPLEFT", 16, -160)
+sourceScroll:SetPoint("BOTTOMRIGHT", -34, 16)
+local sourceChild = CreateFrame("Frame", nil, sourceScroll)
+sourceChild:SetWidth(580)
+sourceScroll:SetScrollChild(sourceChild)
+local sourceRows = {}
 
-local function getSourceSettings()
-	if type(addon.GetSearchSourceSettings) == "function" then
-		return addon.GetSearchSourceSettings()
-	end
-	return {}
+local function refreshSources()
+    local settings, status = addon.GetSearchSourceSettings(), addon.GetSearchCacheStatus()
+    enabled:SetChecked(settings.useAtlasLoot)
+    local text = string.format("%d items. Select the places and categories to search.", status.itemCount)
+    if status.updating then text = "Building catalogue..."
+    elseif status.lastError then text = status.lastError
+    elseif status.availableProviderCount == 0 then text = "Enable AtlasLoot Forever and its loot modules, then reload the UI." end
+    sourceStatus:SetText(text)
+    local sourceChoices = addon.GetSearchSourceChoices()
+    for index, choice in ipairs(sourceChoices) do
+        local row = sourceRows[index]
+        if not row then
+            row = U.CreateCheckButton(sourceChild, "")
+            row:SetPoint("TOPLEFT", 0, -(index - 1) * 26)
+            row:SetScript("OnClick", function(self) addon.SetSearchSourceEnabled(self.sourceKey, self:GetChecked()) end)
+            sourceRows[index] = row
+        end
+        row.sourceKey = choice.key
+        row.text:SetText(choice.group .. " - " .. choice.label)
+        row:SetChecked(not settings.disabledSources[choice.key])
+        row:Show()
+    end
+    for index = #sourceChoices + 1, #sourceRows do sourceRows[index]:Hide() end
+    sourceChild:SetHeight(math.max(1, #sourceChoices * 26))
+    sourceScroll:UpdateScrollChildRect()
 end
 
-local function getSourceStatus()
-	if type(addon.GetSearchCacheStatus) == "function" then
-		return addon.GetSearchCacheStatus()
-	end
-	return {
-		itemCount = 0,
-		stale = true,
-		updating = false,
-		enabledProviderCount = 0,
-		availableProviderCount = 0,
-	}
+local function selectAllSources(value)
+    for _, choice in ipairs(addon.GetSearchSourceChoices()) do addon.SetSearchSourceEnabled(choice.key, value) end
+    refreshSources()
 end
-
-local function setSourceOption(optionKey, value, skipRefreshQueue)
-	if type(addon.SetSearchSourceOption) ~= "function" then
-		print("|cffff7f00ItemScore:|r source manager unavailable.")
-		return false
-	end
-	local changed = addon.SetSearchSourceOption(optionKey, value)
-	if changed and not skipRefreshQueue and optionKey ~= "searchMaxRequiredLevel" and type(addon.QueueSearchCacheRefresh) == "function" then
-		addon.QueueSearchCacheRefresh("options:" .. optionKey)
-	end
-	return changed
-end
-
-local function setAtlasRaidEnabled(raidName, enabled)
-	if type(addon.SetAtlasLootRaidEnabled) ~= "function" then
-		print("|cffff7f00ItemScore:|r source manager unavailable.")
-		return false
-	end
-	local changed = addon.SetAtlasLootRaidEnabled(raidName, enabled and true or false)
-	if changed and type(addon.QueueSearchCacheRefresh) == "function" then
-		addon.QueueSearchCacheRefresh("options:raid:" .. tostring(raidName))
-	end
-	return changed
-end
-
-local function setAtlasFactionEnabled(factionName, enabled)
-	if type(addon.SetAtlasLootFactionEnabled) ~= "function" then
-		print("|cffff7f00ItemScore:|r source manager unavailable.")
-		return false
-	end
-	local changed = addon.SetAtlasLootFactionEnabled(factionName, enabled and true or false)
-	if changed and type(addon.QueueSearchCacheRefresh) == "function" then
-		addon.QueueSearchCacheRefresh("options:faction:" .. tostring(factionName))
-	end
-	return changed
-end
-
-local function setAtlasCraftingEnabled(expansionKey, sourceName, enabled)
-	if type(addon.SetAtlasLootCraftingEnabled) ~= "function" then
-		print("|cffff7f00ItemScore:|r source manager unavailable.")
-		return false
-	end
-	local changed = addon.SetAtlasLootCraftingEnabled(expansionKey, sourceName, enabled and true or false)
-	if changed and type(addon.QueueSearchCacheRefresh) == "function" then
-		addon.QueueSearchCacheRefresh("options:crafting:" .. tostring(expansionKey) .. ":" .. tostring(sourceName))
-	end
-	return changed
-end
-
-local function setAllAtlasSourcesEnabled(enabled)
-	local changed = false
-	if type(addon.SetAllAtlasLootRaidsEnabled) == "function" then
-		changed = addon.SetAllAtlasLootRaidsEnabled(enabled and true or false) or changed
-	end
-	if type(addon.SetAllAtlasLootFactionsEnabled) == "function" then
-		changed = addon.SetAllAtlasLootFactionsEnabled(enabled and true or false) or changed
-	end
-	if type(addon.SetAllAtlasLootCraftingEnabled) == "function" then
-		changed = addon.SetAllAtlasLootCraftingEnabled(enabled and true or false) or changed
-	end
-	if changed and type(addon.QueueSearchCacheRefresh) == "function" then
-		addon.QueueSearchCacheRefresh("options:atlas_sources_all")
-	end
-	return changed
-end
-
-local function setCheckIfExists(checkButton, value)
-	if checkButton then
-		checkButton:SetChecked(value and true or false)
-	end
-end
-
-local refreshSourcesPanel
-
-local function groupEnabledByExpansion(settings, expansionKey)
-	if expansionKey == "classic" then return settings.atlasClassic end
-	if expansionKey == "tbc" then return settings.atlasTBC end
-	if expansionKey == "wrath" then return settings.atlasWrath end
-	return false
-end
-
-local function getSelectableSourceChoices()
-	local getChoices = addon.GetAtlasLootSourceChoices or addon.GetAtlasLootRaidChoices
-	if type(getChoices) ~= "function" then
-		return {}
-	end
-	local choices = getChoices()
-	if type(choices) ~= "table" then return {} end
-	return choices
-end
-
-local function getAtlasDungeonMaxMythicLevel()
-	if type(addon.GetAtlasLootMaxDungeonMythicLevel) ~= "function" then
-		return DUNGEON_MAX_MYTHIC_LEVEL_FALLBACK
-	end
-	local maxLevel = math.floor(tonumber(addon.GetAtlasLootMaxDungeonMythicLevel()) or DUNGEON_MAX_MYTHIC_LEVEL_FALLBACK)
-	if maxLevel < 0 then maxLevel = 0 end
-	return maxLevel
-end
-
-local function getRaidDifficultyChoices()
-	if type(addon.GetAtlasLootRaidDifficultyChoices) == "function" then
-		local choices = addon.GetAtlasLootRaidDifficultyChoices()
-		if type(choices) == "table" and #choices > 0 then
-			return choices
-		end
-	end
-	return {
-		{ value = 3, label = "Normal" },
-		{ value = 4, label = "Heroic" },
-		{ value = 5, label = "Mythic" },
-		{ value = 6, label = "Ascended" },
-	}
-end
-
-local function getRaidDifficultyLabel(value)
-	local numeric = tonumber(value) or 5
-	for _, choice in ipairs(getRaidDifficultyChoices()) do
-		if tonumber(choice.value) == numeric then
-			return choice.label
-		end
-	end
-	return "Mythic"
-end
-
-local function normalizeDungeonMaxMythicLevelInput(value, allowBlank)
-	if allowBlank and tostring(value or "") == "" then return nil end
-	local numeric = math.floor(tonumber(value) or 0)
-	if numeric < 0 then numeric = 0 end
-	return numeric
-end
-
--- Synchronizes the persisted cap unless the player is actively editing a draft.
--- A newly created edit box can briefly own focus before SetAutoFocus(false)
--- takes effect, which must not suppress its initial SavedVariables value.
-local function syncDungeonMaxMythicLevelField(panel, settings, force)
-	if not panel or not panel.dungeonMaxMythicEdit then return false end
-	if not force and panel.dungeonMaxMythicEdit:HasFocus() and panel.dungeonMaxMythicDirty then
-		return false
-	end
-
-	local value = normalizeDungeonMaxMythicLevelInput(settings and settings.atlasDungeonMaxMythicLevel)
-	panel.dungeonMaxMythicSyncing = true
-	setEditBoxText(panel.dungeonMaxMythicEdit, tostring(value))
-	panel.dungeonMaxMythicSyncing = false
-	panel.dungeonMaxMythicValueLoaded = true
-	panel.dungeonMaxMythicDirty = false
-	return true
-end
-
--- Restores the text viewport after enable-state changes. The value can remain
--- intact while its horizontal scroll position leaves every digit off-screen.
-local function refreshDungeonMaxMythicLevelAppearance(panel, enabled)
-	if not panel or not panel.dungeonMaxMythicEdit then return end
-
-	local editBox = panel.dungeonMaxMythicEdit
-	local currentText = editBox:GetText()
-	local wasSyncing = panel.dungeonMaxMythicSyncing
-	panel.dungeonMaxMythicSyncing = true
-	setEditBoxText(editBox, currentText)
-	panel.dungeonMaxMythicSyncing = wasSyncing
-	if editBox.SetTextColor then
-		local color = enabled and 1 or 0.5
-		editBox:SetTextColor(color, color, color, 1)
-	end
-end
-
-local function commitDungeonMaxMythicLevel(panel, skipPanelRefresh, skipRefreshQueue)
-	if not panel or not panel.dungeonMaxMythicEdit then return end
-	if not panel.dungeonMaxMythicValueLoaded and not panel.dungeonMaxMythicDirty and not panel.dungeonMaxMythicEdit:HasFocus() then
-		return
-	end
-	local value = normalizeDungeonMaxMythicLevelInput(panel.dungeonMaxMythicEdit:GetText(), true)
-	if value == nil then
-		local settings = getSourceSettings()
-		syncDungeonMaxMythicLevelField(panel, settings, true)
-		if not skipPanelRefresh then
-			refreshSourcesPanel(panel)
-		end
-		return
-	end
-	setEditBoxText(panel.dungeonMaxMythicEdit, tostring(value))
-	panel.dungeonMaxMythicValueLoaded = true
-	panel.dungeonMaxMythicDirty = false
-	setSourceOption("atlasDungeonMaxMythicLevel", value, skipRefreshQueue)
-	if not skipPanelRefresh then
-		refreshSourcesPanel(panel)
-	end
-end
-
-local function saveDungeonMaxMythicLevelDraft(panel, text)
-	if not panel then return end
-	panel.dungeonMaxMythicDirty = true
-	local value = normalizeDungeonMaxMythicLevelInput(text, true)
-	if value ~= nil then
-		panel.dungeonMaxMythicValueLoaded = true
-		setSourceOption("atlasDungeonMaxMythicLevel", value, false)
-	end
-end
-
-local function buildSourceEntries(sourceChoices)
-	local entries = {}
-	for _, group in ipairs(sourceChoices or {}) do
-		local sections = {
-			{ label = "Raids", choices = group.raids, kind = "raid" },
-			{ label = "Tier Sets", choices = group.tierSets, kind = "tierSet" },
-			{ label = "Reputation", choices = group.factions, kind = "faction" },
-			{ label = "Crafting", choices = group.crafting, kind = "crafting" },
-		}
-		local hasChoices = false
-		for _, section in ipairs(sections) do
-			if type(section.choices) == "table" and #section.choices > 0 then
-				hasChoices = true
-				break
-			end
-		end
-		if hasChoices then
-			if #entries > 0 then
-				entries[#entries + 1] = { kind = "spacer" }
-			end
-			entries[#entries + 1] = {
-				kind = "expansion",
-				label = group.label or tostring(group.key or "Expansion"),
-				expansionKey = group.key,
-			}
-			for _, section in ipairs(sections) do
-				if type(section.choices) == "table" and #section.choices > 0 then
-					entries[#entries + 1] = {
-						kind = "section",
-						label = section.label,
-						expansionKey = group.key,
-					}
-					for _, sourceName in ipairs(section.choices) do
-						entries[#entries + 1] = {
-							kind = "choice",
-							label = sourceName,
-							sourceKind = section.kind,
-							expansionKey = group.key,
-						}
-					end
-				end
-			end
-		end
-	end
-	if #entries == 0 then
-		entries[1] = {
-			kind = "empty",
-			label = "No selectable AtlasLoot sources available.",
-		}
-	end
-	return entries
-end
-
-local function sourceVisibleRowCount(panel)
-	local height = panel.sourceViewport and panel.sourceViewport:GetHeight() or 0
-	return math.max(1, math.floor((height - (SOURCE_LIST_INSET * 2)) / SOURCE_ROW_HEIGHT))
-end
-
-local function scrollSourceListByWheel(panel, delta)
-	if not panel.sourceScroll or not panel.sourceScroll.GetName then return end
-	local scrollName = panel.sourceScroll:GetName()
-	local scrollBar = scrollName and _G[scrollName .. "ScrollBar"]
-	if not scrollBar or not scrollBar:IsShown() then return end
-	local minimum, maximum = scrollBar:GetMinMaxValues()
-	local target = scrollBar:GetValue() - ((tonumber(delta) or 0) * SOURCE_ROW_HEIGHT * 3)
-	if target < minimum then target = minimum end
-	if target > maximum then target = maximum end
-	scrollBar:SetValue(target)
-end
-
-local function acquireSourceRow(panel, rowIndex)
-	panel.sourceRows = panel.sourceRows or {}
-	local row = panel.sourceRows[rowIndex]
-	if row then return row end
-
-	row = CreateFrame("Frame", nil, panel.sourceViewport)
-	row:SetHeight(SOURCE_ROW_HEIGHT)
-	row.background = row:CreateTexture(nil, "BACKGROUND")
-	row.background:SetTexture("Interface\\Buttons\\WHITE8X8")
-	row.background:SetAllPoints(row)
-	row.background:Hide()
-	row.header = row:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
-	row.header:SetPoint("LEFT", row, "LEFT", 6, 0)
-	row.header:SetPoint("RIGHT", row, "RIGHT", -4, 0)
-	row.header:SetJustifyH("LEFT")
-	if row.header.SetWordWrap then row.header:SetWordWrap(false) end
-	row.check = U.CreateCheckButton(row, "")
-	row.check:SetPoint("LEFT", row, "LEFT", 12, 0)
-	row.check:SetScript("OnClick", function(btn)
-		local entry = row.entry
-		if not entry or entry.kind ~= "choice" then return end
-		if entry.sourceKind == "faction" then
-			setAtlasFactionEnabled(entry.label, btn:GetChecked())
-		elseif entry.sourceKind == "crafting" then
-			setAtlasCraftingEnabled(entry.expansionKey, entry.label, btn:GetChecked())
-		else
-			setAtlasRaidEnabled(entry.label, btn:GetChecked())
-		end
-		refreshSourcesPanel(panel)
-	end)
-	local wheelHandler = function(_, delta)
-		scrollSourceListByWheel(panel, delta)
-	end
-	row:EnableMouseWheel(true)
-	row:SetScript("OnMouseWheel", wheelHandler)
-	row.check:EnableMouseWheel(true)
-	row.check:SetScript("OnMouseWheel", wheelHandler)
-	panel.sourceRows[rowIndex] = row
-	return row
-end
-
-local function sourceChoiceDisabled(settings, entry)
-	if entry.sourceKind == "faction" then
-		return settings.atlasDisabledFactions and settings.atlasDisabledFactions[entry.label]
-	end
-	if entry.sourceKind == "crafting" then
-		local disabledByExpansion = settings.atlasDisabledCrafting
-		local disabledSources = type(disabledByExpansion) == "table" and disabledByExpansion[entry.expansionKey]
-		return type(disabledSources) == "table" and disabledSources[entry.label]
-	end
-	return settings.atlasDisabledRaids and settings.atlasDisabledRaids[entry.label]
-end
-
-local function renderSourceRows(panel, settings)
-	if not panel.sourceScroll or not panel.sourceViewport then return end
-	local entries = panel.sourceEntries or {}
-	local visibleRows = sourceVisibleRowCount(panel)
-	FauxScrollFrame_Update(panel.sourceScroll, #entries, visibleRows, SOURCE_ROW_HEIGHT)
-	local offset = FauxScrollFrame_GetOffset(panel.sourceScroll)
-	local textWidth = math.max(80, (panel.sourceViewport:GetWidth() or 400) - 78)
-
-	for rowIndex = 1, visibleRows do
-		local row = acquireSourceRow(panel, rowIndex)
-		local entry = entries[offset + rowIndex]
-		local rowTop = -SOURCE_LIST_INSET - ((rowIndex - 1) * SOURCE_ROW_HEIGHT)
-		row:ClearAllPoints()
-		row:SetPoint("TOPLEFT", panel.sourceViewport, "TOPLEFT", SOURCE_LIST_INSET, rowTop)
-		row:SetPoint("TOPRIGHT", panel.sourceViewport, "TOPRIGHT", -28, rowTop)
-		row.entry = entry
-		if not entry or entry.kind == "spacer" then
-			row:Hide()
-		elseif entry.kind == "choice" then
-			row.background:Hide()
-			row.header:Hide()
-			row.check:Show()
-			row.check:SetChecked(not sourceChoiceDisabled(settings, entry))
-			if row.check.text then
-				row.check.text:SetText(entry.label)
-				row.check.text:SetWidth(textWidth)
-				row.check.text:SetJustifyH("LEFT")
-				if row.check.text.SetWordWrap then row.check.text:SetWordWrap(false) end
-			end
-			setButtonEnabled(row.check, settings.useAtlasLoot and groupEnabledByExpansion(settings, entry.expansionKey))
-			row:Show()
-		else
-			row.check:Hide()
-			row.header:Show()
-			row.header:ClearAllPoints()
-			row.header:SetPoint("LEFT", row, "LEFT", entry.kind == "section" and 14 or 6, 0)
-			row.header:SetPoint("RIGHT", row, "RIGHT", -4, 0)
-			local label = entry.label
-			if entry.kind == "expansion" and not groupEnabledByExpansion(settings, entry.expansionKey) then
-				label = label .. " (disabled)"
-			end
-			row.header:SetText(label)
-			if entry.kind == "expansion" then
-				row.header:SetFontObject("GameFontNormal")
-				if settings.useAtlasLoot and groupEnabledByExpansion(settings, entry.expansionKey) then
-					row.header:SetTextColor(1, 0.82, 0)
-				else
-					row.header:SetTextColor(0.52, 0.52, 0.52)
-				end
-				row.background:SetVertexColor(0.18, 0.14, 0.06, 0.72)
-				row.background:Show()
-			elseif entry.kind == "section" then
-				row.header:SetFontObject("GameFontHighlightSmall")
-				if settings.useAtlasLoot and groupEnabledByExpansion(settings, entry.expansionKey) then
-					row.header:SetTextColor(0.86, 0.78, 0.58)
-				else
-					row.header:SetTextColor(0.46, 0.46, 0.46)
-				end
-				row.background:Hide()
-			else
-				row.header:SetFontObject("GameFontHighlightSmall")
-				row.header:SetTextColor(0.72, 0.72, 0.72)
-				row.background:Hide()
-			end
-			row:Show()
-		end
-	end
-
-	for rowIndex = visibleRows + 1, #(panel.sourceRows or {}) do
-		panel.sourceRows[rowIndex]:Hide()
-	end
-end
-
-local function rebuildSourceList(panel, settings)
-	if not panel.sourceScroll then return end
-	panel.sourceEntries = buildSourceEntries(getSelectableSourceChoices())
-	renderSourceRows(panel, settings)
-end
-
-refreshSourcesPanel = function(panel)
-	local settings = getSourceSettings()
-	local status = getSourceStatus()
-
-	setCheckIfExists(panel.useLootCollector, settings.useLootCollector)
-	setCheckIfExists(panel.useAtlasLoot, settings.useAtlasLoot)
-	setCheckIfExists(panel.worldforgedZG, settings.worldforgedZG)
-	setCheckIfExists(panel.worldforgedMC, settings.worldforgedMC)
-	setCheckIfExists(panel.worldforgedBWL, settings.worldforgedBWL)
-	setCheckIfExists(panel.worldforgedNaxx, settings.worldforgedNaxx)
-	setCheckIfExists(panel.atlasClassic, settings.atlasClassic)
-	setCheckIfExists(panel.atlasTBC, settings.atlasTBC)
-	setCheckIfExists(panel.atlasWrath, settings.atlasWrath)
-	setCheckIfExists(panel.dungeonHighestMythicOnly, settings.atlasDungeonHighestMythicOnly ~= false)
-	if panel.dungeonMaxMythicEdit then
-		local availableMaxLevel = getAtlasDungeonMaxMythicLevel()
-		syncDungeonMaxMythicLevelField(panel, settings, false)
-		if panel.dungeonMaxMythicHint then
-			panel.dungeonMaxMythicHint:SetText("0 = Mythic; available max " .. tostring(availableMaxLevel))
-		end
-	end
-	if panel.raidMaxDifficultyDrop then
-		UIDropDownMenu_SetSelectedValue(panel.raidMaxDifficultyDrop, settings.atlasRaidMaxDifficulty)
-		UIDropDownMenu_SetText(panel.raidMaxDifficultyDrop, getRaidDifficultyLabel(settings.atlasRaidMaxDifficulty))
-	end
-
-	local atlasEnabled = settings.useAtlasLoot and true or false
-	local lootCollectorEnabled = settings.useLootCollector and true or false
-	setButtonEnabled(panel.worldforgedZG, lootCollectorEnabled)
-	setButtonEnabled(panel.worldforgedMC, lootCollectorEnabled)
-	setButtonEnabled(panel.worldforgedBWL, lootCollectorEnabled)
-	setButtonEnabled(panel.worldforgedNaxx, lootCollectorEnabled)
-	setButtonEnabled(panel.atlasClassic, atlasEnabled)
-	setButtonEnabled(panel.atlasTBC, atlasEnabled)
-	setButtonEnabled(panel.atlasWrath, atlasEnabled)
-	setButtonEnabled(panel.dungeonHighestMythicOnly, atlasEnabled)
-	setButtonEnabled(panel.enableAllSourcesBtn, atlasEnabled)
-	setButtonEnabled(panel.disableAllSourcesBtn, atlasEnabled)
-	setButtonEnabled(panel.dungeonMaxMythicEdit, atlasEnabled)
-	refreshDungeonMaxMythicLevelAppearance(panel, atlasEnabled)
-	if panel.raidMaxDifficultyDrop then
-		if atlasEnabled and type(UIDropDownMenu_EnableDropDown) == "function" then
-			UIDropDownMenu_EnableDropDown(panel.raidMaxDifficultyDrop)
-		elseif not atlasEnabled and type(UIDropDownMenu_DisableDropDown) == "function" then
-			UIDropDownMenu_DisableDropDown(panel.raidMaxDifficultyDrop)
-		end
-	end
-	rebuildSourceList(panel, settings)
-
-	local disabledCount = 0
-	if type(addon.GetDisabledAtlasLootPlaces) == "function" then
-		disabledCount = #(addon.GetDisabledAtlasLootPlaces() or {})
-	end
-	if status.updating then
-		panel.statusText:SetText("Cache: updating...")
-	else
-		panel.statusText:SetText(string.format("Cache: %d items  |  Excluded areas: %d", status.itemCount or 0, disabledCount))
-	end
-end
-
-SourcesPanel:SetScript("OnShow", function(self)
-	if not self.initialized then
-		self.initialized = true
-
-		local title = self:CreateFontString(nil, "ARTWORK", "GameFontNormalLarge")
-		title:SetPoint("TOPLEFT", 16, -16)
-		title:SetText("Loot Sources")
-
-		self.lootCollectorGroup = createOptionsGroup(self)
-		self.lootCollectorGroup:SetPoint("TOPLEFT", 16, -44)
-		self.lootCollectorGroup:SetSize(300, 120)
-
-		self.useLootCollector = U.CreateCheckButton(self.lootCollectorGroup, "LootCollector")
-		self.useLootCollector:SetPoint("TOPLEFT", 10, -8)
-		self.useLootCollector:SetScript("OnClick", function(btn)
-			setSourceOption("useLootCollector", btn:GetChecked())
-			refreshSourcesPanel(self)
-		end)
-
-		local wfLabel = self.lootCollectorGroup:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-		wfLabel:SetPoint("TOPLEFT", 32, -38)
-		wfLabel:SetText("Worldforged tiers")
-
-		self.worldforgedZG = U.CreateCheckButton(self.lootCollectorGroup, "Zul'Gurub")
-		self.worldforgedZG:SetPoint("TOPLEFT", 30, -58)
-		self.worldforgedZG:SetScript("OnClick", function(btn)
-			setSourceOption("worldforgedZG", btn:GetChecked())
-			refreshSourcesPanel(self)
-		end)
-
-		self.worldforgedMC = U.CreateCheckButton(self.lootCollectorGroup, "MC")
-		self.worldforgedMC:SetPoint("TOPLEFT", 160, -58)
-		self.worldforgedMC:SetScript("OnClick", function(btn)
-			setSourceOption("worldforgedMC", btn:GetChecked())
-			refreshSourcesPanel(self)
-		end)
-
-		self.worldforgedBWL = U.CreateCheckButton(self.lootCollectorGroup, "BWL")
-		self.worldforgedBWL:SetPoint("TOPLEFT", 30, -84)
-		self.worldforgedBWL:SetScript("OnClick", function(btn)
-			setSourceOption("worldforgedBWL", btn:GetChecked())
-			refreshSourcesPanel(self)
-		end)
-
-		self.worldforgedNaxx = U.CreateCheckButton(self.lootCollectorGroup, "Naxxramas")
-		self.worldforgedNaxx:SetPoint("TOPLEFT", 160, -84)
-		self.worldforgedNaxx:SetScript("OnClick", function(btn)
-			setSourceOption("worldforgedNaxx", btn:GetChecked())
-			refreshSourcesPanel(self)
-		end)
-
-		self.atlasGroup = createOptionsGroup(self)
-		self.atlasGroup:SetPoint("TOPLEFT", 16, -176)
-		self.atlasGroup:SetSize(300, 278)
-
-		self.useAtlasLoot = U.CreateCheckButton(self.atlasGroup, "AtlasLoot")
-		self.useAtlasLoot:SetPoint("TOPLEFT", 10, -8)
-		self.useAtlasLoot:SetScript("OnClick", function(btn)
-			setSourceOption("useAtlasLoot", btn:GetChecked())
-			refreshSourcesPanel(self)
-		end)
-
-		local expLabel = self.atlasGroup:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-		expLabel:SetPoint("TOPLEFT", 32, -38)
-		expLabel:SetText("Expansions")
-
-		self.atlasClassic = U.CreateCheckButton(self.atlasGroup, "Classic")
-		self.atlasClassic:SetPoint("TOPLEFT", 30, -58)
-		self.atlasClassic:SetScript("OnClick", function(btn)
-			setSourceOption("atlasClassic", btn:GetChecked())
-			refreshSourcesPanel(self)
-		end)
-
-		self.atlasTBC = U.CreateCheckButton(self.atlasGroup, "Burning Crusade")
-		self.atlasTBC:SetPoint("TOPLEFT", 30, -82)
-		self.atlasTBC:SetScript("OnClick", function(btn)
-			setSourceOption("atlasTBC", btn:GetChecked())
-			refreshSourcesPanel(self)
-		end)
-
-		self.atlasWrath = U.CreateCheckButton(self.atlasGroup, "Wrath of the Lich King")
-		self.atlasWrath:SetPoint("TOPLEFT", 30, -106)
-		self.atlasWrath:SetScript("OnClick", function(btn)
-			setSourceOption("atlasWrath", btn:GetChecked())
-			refreshSourcesPanel(self)
-		end)
-
-		self.dungeonMaxMythicLabel = self.atlasGroup:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-		self.dungeonMaxMythicLabel:SetPoint("TOPLEFT", 30, -146)
-		self.dungeonMaxMythicLabel:SetText("Dungeon Mythic+ cap")
-
-		self.dungeonMaxMythicEdit = U.CreateEditBox(self.atlasGroup, 44)
-		self.dungeonMaxMythicEdit:SetPoint("LEFT", self.dungeonMaxMythicLabel, "RIGHT", 10, 0)
-		self.dungeonMaxMythicEdit:SetNumeric(true)
-		syncDungeonMaxMythicLevelField(self, getSourceSettings(), true)
-		self.dungeonMaxMythicEdit:ClearFocus()
-		self.dungeonMaxMythicEdit:SetScript("OnEnterPressed", function(box)
-			box:ClearFocus()
-		end)
-		self.dungeonMaxMythicEdit:SetScript("OnTextChanged", function(box)
-			if not self.dungeonMaxMythicSyncing and box:IsVisible() and box:HasFocus() then
-				saveDungeonMaxMythicLevelDraft(self, box:GetText())
-			end
-		end)
-		self.dungeonMaxMythicEdit:SetScript("OnEditFocusLost", function()
-			commitDungeonMaxMythicLevel(self)
-		end)
-
-		self.dungeonMaxMythicHint = self.atlasGroup:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
-		self.dungeonMaxMythicHint:SetPoint("TOPLEFT", 30, -170)
-		self.dungeonMaxMythicHint:SetText("0 = Mythic")
-
-		self.dungeonHighestMythicOnly = U.CreateCheckButton(self.atlasGroup, "Only highest Mythic+ variant")
-		self.dungeonHighestMythicOnly:SetPoint("TOPLEFT", 30, -190)
-		self.dungeonHighestMythicOnly:SetScript("OnClick", function(btn)
-			setSourceOption("atlasDungeonHighestMythicOnly", btn:GetChecked())
-			refreshSourcesPanel(self)
-		end)
-
-		self.raidMaxDifficultyLabel = self.atlasGroup:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-		self.raidMaxDifficultyLabel:SetPoint("TOPLEFT", 30, -224)
-		self.raidMaxDifficultyLabel:SetText("Raid difficulty cap")
-
-		self.raidMaxDifficultyDrop = CreateFrame("Frame", "ISAtlasRaidDifficultyDD", self.atlasGroup, "UIDropDownMenuTemplate")
-		self.raidMaxDifficultyDrop:SetPoint("LEFT", self.raidMaxDifficultyLabel, "RIGHT", -4, -3)
-		UIDropDownMenu_Initialize(self.raidMaxDifficultyDrop, function()
-			for _, choice in ipairs(getRaidDifficultyChoices()) do
-				UIDropDownMenu_AddButton({
-					text = choice.label,
-					value = choice.value,
-					func = function(button)
-						setSourceOption("atlasRaidMaxDifficulty", button.value)
-						refreshSourcesPanel(self)
-					end,
-				})
-			end
-		end)
-		UIDropDownMenu_SetWidth(self.raidMaxDifficultyDrop, 100)
-
-		self.cacheGroup = createOptionsGroup(self)
-		self.cacheGroup:SetPoint("TOPLEFT", 16, -466)
-		self.cacheGroup:SetSize(300, 70)
-
-		self.refreshCacheBtn = U.CreateButton(self.cacheGroup, 126, HEADER_HEIGHT, "Refresh Cache")
-		self.refreshCacheBtn:SetPoint("TOPLEFT", 10, -10)
-		self.refreshCacheBtn:SetScript("OnClick", function()
-			commitDungeonMaxMythicLevel(self, true, true)
-			if type(addon.RefreshSearchCache) == "function" then
-				local started, reason = addon.RefreshSearchCache(true, false)
-				if not started and reason == "busy" and type(addon.QueueSearchCacheRefresh) == "function" then
-					addon.QueueSearchCacheRefresh("options:manual_refresh_busy")
-				end
-			elseif type(addon.QueueSearchCacheRefresh) == "function" then
-				addon.QueueSearchCacheRefresh("options:manual_refresh")
-			else
-				print("|cffff7f00ItemScore:|r source manager unavailable.")
-			end
-			refreshSourcesPanel(self)
-		end)
-
-		self.statusText = self.cacheGroup:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
-		self.statusText:SetPoint("TOPLEFT", 10, -44)
-		self.statusText:SetJustifyH("LEFT")
-
-		self.sourceTitle = self:CreateFontString(nil, "ARTWORK", "GameFontNormal")
-		self.sourceTitle:SetPoint("TOPLEFT", 334, -48)
-		self.sourceTitle:SetText("AtlasLoot Sources")
-
-		self.sourceHint = self:CreateFontString(nil, "ARTWORK", "GameFontHighlightSmall")
-		self.sourceHint:SetPoint("TOPLEFT", 334, -70)
-		self.sourceHint:SetText("Dungeons are automatic; other sources are selectable below.")
-
-		self.enableAllSourcesBtn = U.CreateButton(self, 92, HEADER_HEIGHT, "Select All")
-		self.enableAllSourcesBtn:SetPoint("TOPLEFT", 334, -88)
-		self.enableAllSourcesBtn:SetScript("OnClick", function()
-			setAllAtlasSourcesEnabled(true)
-			refreshSourcesPanel(self)
-		end)
-
-		self.disableAllSourcesBtn = U.CreateButton(self, 92, HEADER_HEIGHT, "Clear All")
-		self.disableAllSourcesBtn:SetPoint("LEFT", self.enableAllSourcesBtn, "RIGHT", 8, 0)
-		self.disableAllSourcesBtn:SetScript("OnClick", function()
-			setAllAtlasSourcesEnabled(false)
-			refreshSourcesPanel(self)
-		end)
-
-		self.sourceViewport = createOptionsGroup(self)
-		self.sourceViewport:SetPoint("TOPLEFT", 334, -120)
-		self.sourceViewport:SetPoint("BOTTOMRIGHT", -16, 16)
-		self.sourceViewport:EnableMouseWheel(true)
-		self.sourceViewport:SetScript("OnMouseWheel", function(_, delta)
-			scrollSourceListByWheel(self, delta)
-		end)
-
-		self.sourceScroll = CreateFrame("ScrollFrame", "ISAtlasSourceScroll", self.sourceViewport, "FauxScrollFrameTemplate")
-		self.sourceScroll:SetPoint("TOPLEFT", 4, -4)
-		self.sourceScroll:SetPoint("BOTTOMRIGHT", -26, 4)
-		self.sourceScroll:SetScript("OnVerticalScroll", function(scrollFrame, offset)
-			FauxScrollFrame_OnVerticalScroll(scrollFrame, offset, SOURCE_ROW_HEIGHT, function()
-				renderSourceRows(self, getSourceSettings())
-			end)
-		end)
-		self.sourceRows = {}
-		self.sourceViewport:SetScript("OnSizeChanged", function()
-			if self.sourceEntries then
-				renderSourceRows(self, getSourceSettings())
-			end
-		end)
-	end
-
-	refreshSourcesPanel(self)
-end)
-
-SourcesPanel.okay = function(self)
-	commitDungeonMaxMythicLevel(self, true, false)
-end
-
-SourcesPanel:SetScript("OnHide", function(self)
-	commitDungeonMaxMythicLevel(self, true, false)
-end)
-
-InterfaceOptions_AddCategory(SourcesPanel)
-
+allButton:SetScript("OnClick", function() selectAllSources(true) end)
+noneButton:SetScript("OnClick", function() selectAllSources(false) end)
+SourcesPanel:SetScript("OnShow", refreshSources)
+addon.SubscribeSearchCatalog(function() if SourcesPanel:IsShown() then refreshSources() end end)
 SLASH_ITEMSCORE1 = "/itemscore"
-SlashCmdList["ITEMSCORE"] = function()
-	InterfaceOptionsFrame_OpenToCategory(ScorePanel)
-	InterfaceOptionsFrame_OpenToCategory(ScorePanel)
-end
+SlashCmdList["ITEMSCORE"] = function() Settings.OpenToCategory(scoreCategory:GetID()) end

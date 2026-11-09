@@ -1,3 +1,4 @@
+-- Stores per-character score profiles and evaluates Blizzard item attributes.
 local addonName, addon = ...
 _G.ItemScore = addon
 
@@ -103,6 +104,7 @@ end
 
 local function ensureData()
 	if not ItemScoreData then ItemScoreData = {} end
+	ItemScoreData.searchDiagnostics = nil -- Remove temporary pre-release diagnostics.
 	if not ItemScoreData.profiles then
 		ItemScoreData.profiles = {
 			["DPS"] = createProfile()
@@ -301,30 +303,50 @@ local function profileWeightForStat(profile, statKey)
 end
 
 local function calculateItemScoreForProfile(itemLink, profile)
-	local itemStats = GetItemStats(itemLink)
-	if not itemStats then return 0 end
+	local itemStats = addon.Query.GetItemStats(itemLink)
+	if not itemStats or not addon.Query.GetItemInfo(itemLink) then
+		addon.Query.Add(itemLink)
+		return 0
+	end
+	-- Classic items can expose spell damage separately from healing and spell power.
 	local score = 0
+	local spellDamageKey = "ITEM_MOD_SPELL_DAMAGE_DONE_SHORT"
+	local spellPowerKey = "ITEM_MOD_SPELL_POWER_SHORT"
 	for statKey, statValue in pairs(itemStats) do
 		local weight = profileWeightForStat(profile, statKey)
+		if statKey == spellDamageKey and itemStats[spellPowerKey] == nil and profile.weights[spellDamageKey] == nil then
+			weight = profileWeightForStat(profile, spellPowerKey)
+		end
 		score = score + statValue * weight
 	end
 	return normalizeScore(score, itemLink)
 end
 
-local function addScoreToTooltip(tooltip)
-	local _, itemLink = tooltip:GetItem()
+local function addScoreToTooltip(tooltip, tooltipData)
+	local itemLink
+	if type(tooltip.GetItem) == "function" then
+		local name
+		name, itemLink = tooltip:GetItem()
+	end
+	if issecretvalue(itemLink) then return end
+	if not itemLink and tooltipData and not issecretvalue(tooltipData.id) and tooltipData.id then
+		itemLink = select(2, addon.Query.GetItemInfo(tooltipData.id)) or ("item:" .. tooltipData.id)
+	end
 	if not itemLink then return end
 	local data = getData()
 	for _, name in ipairs(data.order) do
-		local score = addon.CalculateScore(itemLink, name)
-		if score and score > 0 then tooltip:AddLine(string.format("%s: %.1f", name or "IS", score or 0), 0.1, 1, 0.1) end
+		if data.profiles[name].enabled then
+			local score = addon.CalculateScore(itemLink, name)
+			tooltip:AddLine(string.format("%s: %.1f", name, score), 0.1, 1, 0.1)
+		end
 	end
 end
 
-GameTooltip:HookScript("OnTooltipSetItem", addScoreToTooltip)
-ItemRefTooltip:HookScript("OnTooltipSetItem", addScoreToTooltip)
-ShoppingTooltip1:HookScript("OnTooltipSetItem", addScoreToTooltip)
-ShoppingTooltip2:HookScript("OnTooltipSetItem", addScoreToTooltip)
+TooltipDataProcessor.AddTooltipPostCall(Enum.TooltipDataType.Item, function(tooltip, tooltipData)
+	if tooltip == GameTooltip or tooltip == ItemRefTooltip or tooltip == ShoppingTooltip1 or tooltip == ShoppingTooltip2 then
+		addScoreToTooltip(tooltip, tooltipData)
+	end
+end)
 
 --------------------------------------------------
 -- Public scoring API (for Search UI)

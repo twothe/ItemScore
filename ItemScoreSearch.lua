@@ -3,10 +3,6 @@ local addonName, addon = ...
 -- Search UI and slash-command surface for scoring cached provider items against configured profiles.
 local LIST_UPGRADES_MAX = 6
 local LIST_SLOT_MAX = 20
-local IGNORE_CLASS_RESTRICTION_EQUIP_OPTIONS = {
-	ignoreClassRestriction = true,
-}
-
 local Search = {}
 addon.Search = Search
 local Query = addon.Query
@@ -62,13 +58,6 @@ local function trim(value)
 	return text
 end
 
-local function parseBoolean(value)
-	local low = string.lower(trim(value) or "")
-	if low == "on" or low == "true" or low == "1" then return true, true end
-	if low == "off" or low == "false" or low == "0" then return true, false end
-	return false, nil
-end
-
 local function sourcePreview(sourceList)
 	if type(sourceList) ~= "table" or #sourceList == 0 then
 		return "Unknown Source", "Unknown Source"
@@ -83,47 +72,6 @@ local function sourcePreview(sourceList)
 	return placeName, sourceName
 end
 
-local function difficultySuffix(label)
-	label = trim(label)
-	if not label then return "" end
-	return " |cffcfcfcf(" .. label .. ")|r"
-end
-
-local function isAtlasDifficultyLabel(label)
-	label = trim(label)
-	if not label then return false end
-	return label == "N" or label == "HC" or label == "M" or label == "Asc" or string.match(label, "^M%+%d+$") ~= nil
-end
-
-local function shouldUseTooltipDifficulty(metadata, tooltipInfo)
-	if type(tooltipInfo) ~= "table" or not tooltipInfo.difficultyLabel then return false end
-	if not metadata or not isAtlasDifficultyLabel(metadata.difficultyLabel) then return false end
-	return true
-end
-
-local function resolveDisplayMetadata(itemLink, metadata)
-	if type(addon.GetItemTooltipDifficultyInfo) ~= "function" then return metadata, nil end
-	if not metadata or not isAtlasDifficultyLabel(metadata.difficultyLabel) then return metadata, nil end
-	local tooltipInfo = addon.GetItemTooltipDifficultyInfo(itemLink)
-	if not shouldUseTooltipDifficulty(metadata, tooltipInfo) then
-		return metadata, nil
-	end
-	return tooltipInfo, tooltipInfo.difficultyLabel
-end
-
-local function replaceSourceDifficultyLabels(sources, difficultyLabel)
-	if not difficultyLabel or type(sources) ~= "table" then return sources end
-	local adjusted = {}
-	for index, sourceData in ipairs(sources) do
-		adjusted[index] = {
-			place = sourceData.place,
-			source = sourceData.source,
-			difficultyLabel = difficultyLabel,
-		}
-	end
-	return adjusted
-end
-
 local function belongsToSlot(invType, wanted)
 	if not invType or not wanted then return false end
 	for _, value in ipairs(wanted) do
@@ -133,12 +81,12 @@ local function belongsToSlot(invType, wanted)
 end
 
 local function itemRaw(itemID)
-	return "item:" .. tostring(itemID) .. ":::::::::"
+	return "item:" .. tostring(itemID)
 end
 
-local function resolveSearchItemInfo(itemID, metadata)
+local function resolveSearchItemInfo(itemID)
 	local primaryRaw = itemRaw(itemID)
-	local name, link, rarity, itemLevel, requiredLevel, itemType, subType, stackCount, invType, icon = addon.GetItemInfoCompat(primaryRaw)
+	local name, link, rarity, itemLevel, requiredLevel, itemType, subType, stackCount, invType, icon = addon.Query.GetItemInfo(itemID)
 	if name then
 		return {
 			raw = primaryRaw,
@@ -155,42 +103,11 @@ local function resolveSearchItemInfo(itemID, metadata)
 		}
 	end
 
-	local fallbackID = metadata and tonumber(metadata.fallbackItemID)
-	local fallbackRaw = metadata and metadata.fallbackItemLink
-	if not fallbackRaw and fallbackID and fallbackID > 0 then
-		fallbackRaw = itemRaw(fallbackID)
-	end
-
-	if fallbackRaw and fallbackRaw ~= primaryRaw then
-		name, link, rarity, itemLevel, requiredLevel, itemType, subType, stackCount, invType, icon = addon.GetItemInfoCompat(fallbackRaw)
-		if name then
-			return {
-				raw = fallbackRaw,
-				name = name,
-				link = link or fallbackRaw,
-				rarity = rarity,
-				itemLevel = itemLevel,
-				requiredLevel = requiredLevel,
-				itemType = itemType,
-				subType = subType,
-				stackCount = stackCount,
-				invType = invType,
-				icon = icon,
-				fallbackUsed = true,
-			}
-		end
-	end
-
-	return nil, primaryRaw, fallbackID
+	return nil, primaryRaw
 end
 
-local function queueMissingItemInfo(itemID, fallbackID)
-	local queuedPrimary = Query.Add(itemID)
-	local queuedFallback = false
-	if fallbackID and fallbackID ~= itemID then
-		queuedFallback = Query.Add(fallbackID)
-	end
-	return queuedPrimary or queuedFallback
+local function queueMissingItemInfo(itemID)
+	return Query.Add(itemID)
 end
 
 local function nowMillis()
@@ -221,9 +138,8 @@ local function insertTop(list, itemData, maxItems)
 	end
 end
 
-local function makeRowData(itemID, raw, link, rarity, name, icon, score, sources, metadata, sourceDifficultyOverride)
-	local displaySources = replaceSourceDifficultyLabels(sources, sourceDifficultyOverride)
-	local placeText, sourceText = sourcePreview(displaySources)
+local function makeRowData(itemID, raw, link, rarity, name, icon, score, sources)
+	local placeText, sourceText = sourcePreview(sources)
 	return {
 		score = score,
 		link = link or raw,
@@ -233,8 +149,8 @@ local function makeRowData(itemID, raw, link, rarity, name, icon, score, sources
 		icon = icon,
 		dungeon = placeText,
 		sourceText = sourceText,
-		sources = displaySources,
-		difficultyLabel = metadata and metadata.difficultyLabel or nil,
+		sources = sources,
+		itemID = itemID,
 	}
 end
 
@@ -248,7 +164,7 @@ local COLUMN_LEFT_INSET = 2
 local FLAT_TEXTURE = "Interface\\Buttons\\WHITE8X8"
 
 local function createPanel(parent)
-	local panel = CreateFrame("Frame", nil, parent)
+	local panel = CreateFrame("Frame", nil, parent, "BackdropTemplate")
 	panel:SetBackdrop({
 		bgFile = "Interface\\Tooltips\\UI-Tooltip-Background",
 		edgeFile = "Interface\\Tooltips\\UI-Tooltip-Border",
@@ -279,7 +195,7 @@ local function validDimension(value, fallback)
 end
 
 local windowSettings = getWindowSettings()
-local frame = CreateFrame("Frame", "ItemScoreSearchFrame", UIParent)
+local frame = CreateFrame("Frame", "ItemScoreSearchFrame", UIParent, "BackdropTemplate")
 frame:SetSize(
 	validDimension(windowSettings.width, DEFAULT_WIDTH),
 	validDimension(windowSettings.height, DEFAULT_HEIGHT)
@@ -294,6 +210,7 @@ frame:SetPoint(
 frame:SetFrameStrata("DIALOG")
 frame:SetMovable(true)
 frame:SetResizable(true)
+frame:SetResizeBounds(700, 300)
 frame:EnableMouse(true)
 frame:RegisterForDrag("LeftButton")
 frame:SetClampedToScreen(true)
@@ -467,16 +384,6 @@ local function showItemTooltip(row)
 
 	GameTooltip:SetOwner(row, "ANCHOR_RIGHT")
 	GameTooltip:SetHyperlink(row.link)
-	if type(addon.GetTooltipDifficultyInfo) == "function" and isAtlasDifficultyLabel(row.difficultyLabel) then
-		local tooltipInfo = addon.GetTooltipDifficultyInfo(GameTooltip)
-		if shouldUseTooltipDifficulty({ difficultyLabel = row.difficultyLabel }, tooltipInfo) then
-			row.difficultyLabel = tooltipInfo.difficultyLabel
-			row.sources = replaceSourceDifficultyLabels(row.sources, row.difficultyLabel)
-			if row.baseItemText then
-				row.itemLink:SetText(row.baseItemText .. difficultySuffix(row.difficultyLabel))
-			end
-		end
-	end
 	if type(row.sources) == "table" and #row.sources > 1 then
 		GameTooltip:AddLine(" ")
 		GameTooltip:AddLine("Known Sources", 0.9, 0.9, 0.9)
@@ -623,126 +530,23 @@ end
 local selectedProfile
 local selectedSlot = SLOT_MAP[1].label
 
-local function fallbackStatus(errorText)
-	return {
-		updating = false,
-		stale = true,
-		lastBuildAt = 0,
-		itemCount = 0,
-		lastError = errorText or "Search source manager unavailable",
-		enabledProviderCount = 0,
-		availableProviderCount = 0,
-		settingsChanged = false,
-		providers = {},
-	}
-end
+local getCatalogAndStatus = addon.GetSearchCatalog
+local getStatusSafe = addon.GetSearchCacheStatus
+local refreshCacheSafe = addon.RefreshSearchCache
+local setSourceOptionSafe = addon.SetSearchSourceOption
+local getSourceSettingsSafe = addon.GetSearchSourceSettings
 
-local function getCatalogAndStatus()
-	if type(addon.GetSearchCatalog) == "function" then
-		return addon.GetSearchCatalog()
-	end
-	return {
-		itemIDs = {},
-		itemSources = {},
-		itemMeta = {},
-		byPlace = {},
-	}, fallbackStatus("GetSearchCatalog unavailable")
-end
-
-local function getStatusSafe()
-	if type(addon.GetSearchCacheStatus) == "function" then
-		return addon.GetSearchCacheStatus()
-	end
-	return fallbackStatus("GetSearchCacheStatus unavailable")
-end
-
-local function refreshCacheSafe(forceRefresh, silent)
-	if type(addon.RefreshSearchCache) == "function" then
-		return addon.RefreshSearchCache(forceRefresh, silent)
-	end
-	print("|cffff7f00ItemScore:|r search source manager unavailable.")
-	return false, "unavailable"
-end
-
-local function setSourceOptionSafe(optionKey, value)
-	if type(addon.SetSearchSourceOption) == "function" then
-		return addon.SetSearchSourceOption(optionKey, value)
-	end
-	print("|cffff7f00ItemScore:|r search source manager unavailable.")
-	return false
-end
-
-local function getSourceSettingsSafe()
-	if type(addon.GetSearchSourceSettings) == "function" then
-		return addon.GetSearchSourceSettings()
-	end
-	return {}
-end
-
-local function getArmorTypeFilterForProfile(profileName)
-	if type(addon.GetProfileArmorTypeFilterState) == "function" then
-		local hasFilter, selectedTypes = addon.GetProfileArmorTypeFilterState(profileName)
-		if hasFilter and type(selectedTypes) == "table" then
-			return true, selectedTypes
-		end
-	end
-	return false, {}
-end
-
-local function getWeaponTypeFilterForProfile(profileName)
-	if type(addon.GetProfileWeaponTypeFilterState) == "function" then
-		local hasFilter, selectedTypes = addon.GetProfileWeaponTypeFilterState(profileName)
-		if hasFilter and type(selectedTypes) == "table" then
-			return true, selectedTypes
-		end
-	end
-	return false, {}
-end
+local getArmorTypeFilterForProfile = addon.GetProfileArmorTypeFilterState
+local getWeaponTypeFilterForProfile = addon.GetProfileWeaponTypeFilterState
 
 local function isArmorTypeFilterExemptSlot(invType)
 	return invType == "INVTYPE_CLOAK"
 end
 
-local function queueRefreshSafe(reason)
-	if type(addon.QueueSearchCacheRefresh) == "function" then
-		addon.QueueSearchCacheRefresh(reason)
-	end
-end
-
-local function getDisabledPlacesSafe()
-	if type(addon.GetDisabledAtlasLootPlaces) == "function" then
-		return addon.GetDisabledAtlasLootPlaces()
-	end
-	return {}
-end
-
-local function setAtlasPlaceEnabledSafe(placeName, enabled)
-	if type(addon.SetAtlasLootPlaceEnabled) == "function" then
-		return addon.SetAtlasLootPlaceEnabled(placeName, enabled)
-	end
-	print("|cffff7f00ItemScore:|r search source manager unavailable.")
-	return false
-end
-
-local function setAllAtlasRaidsEnabledSafe(enabled)
-	if type(addon.SetAllAtlasLootRaidsEnabled) == "function" then
-		return addon.SetAllAtlasLootRaidsEnabled(enabled)
-	end
-	print("|cffff7f00ItemScore:|r search source manager unavailable.")
-	return false
-end
-
-local function getKnownPlacesSafe()
-	if type(addon.GetKnownSearchPlaces) == "function" then
-		return addon.GetKnownSearchPlaces()
-	end
-	return {}
-end
-
 local function normalizeMaxRequiredLevel(value)
 	local numeric = math.floor(tonumber(value) or 0)
 	if numeric < 0 then numeric = 0 end
-	if numeric > 80 then numeric = 80 end
+	if numeric > 60 then numeric = 60 end
 	return numeric
 end
 
@@ -806,8 +610,6 @@ local function refreshRows(data)
 				row.bossText:SetText("")
 				row.link = nil
 				row.sources = nil
-				row.baseItemText = nil
-				row.difficultyLabel = nil
 			else
 				row.backgroundColor = { 0.035, 0.038, 0.045, rowIndex % 2 == 0 and 0.82 or 0.55 }
 				row.background:SetVertexColor(unpack(row.backgroundColor))
@@ -820,16 +622,14 @@ local function refreshRows(data)
 					if delta < 0 then deltaColor = "|cffff0000" end
 					row.scoreText:SetText(string.format("%.1f %s(%+.1f)|r", rowData.score, deltaColor, delta))
 				end
-				local _, _, rarity = addon.GetItemInfoCompat(rowData.link)
-				local color = select(4, GetItemQualityColor(rarity or 1))
-				local itemText = color .. (select(2, addon.GetItemInfoCompat(rowData.raw)) or ("[" .. rowData.name .. "]")) .. "|r"
-				row.itemLink:SetText(itemText .. difficultySuffix(rowData.difficultyLabel))
+				local rarity = rowData.rarity
+				local _, _, _, hex = C_Item.GetItemQualityColor(rarity or 1)
+				local itemText = "|c" .. (hex or "ffffffff"):gsub("^|c", "") .. "[" .. rowData.name .. "]|r"
+				row.itemLink:SetText(itemText)
 				row.dungeonText:SetText(rowData.dungeon or "")
 				row.bossText:SetText(rowData.sourceText or "")
 				row.link = rowData.link
 				row.sources = rowData.sources
-				row.baseItemText = itemText
-				row.difficultyLabel = rowData.difficultyLabel
 			end
 			row:Show()
 		else
@@ -839,8 +639,6 @@ local function refreshRows(data)
 			row.bossText:SetText("")
 			row.link = nil
 			row.sources = nil
-			row.baseItemText = nil
-			row.difficultyLabel = nil
 			row:Hide()
 		end
 	end
@@ -890,10 +688,10 @@ UIDropDownMenu_SetSelectedValue(slotDrop, selectedSlot)
 
 local function cacheStatusToMessage(status)
 	if status.enabledProviderCount == 0 then
-		return "No search data source enabled. Enable them in Interface -> AddOns -> ItemScore -> Loot Sources (or use /is lootcollector on, /is atlas on)."
+		return "Enable AtlasLoot in Settings -> AddOns -> ItemScore -> Loot Sources."
 	end
 	if status.availableProviderCount == 0 then
-		return "No supported source addon loaded (LootCollector / AtlasLoot)."
+		return "AtlasLoot Forever is not loaded. Enable AtlasLootClassic and its loot modules."
 	end
 	if status.settingsChanged then
 		return "Search cache is rebuilding after loot-source setting changes. Try again shortly."
@@ -915,13 +713,16 @@ end
 --------------------------------------------------
 local searchState = nil
 local lastSearchStats = nil
+local lastResults = {}
+function Search.GetLastResults() return lastResults end
 local searchWorker = CreateFrame("Frame")
-local pendingQueryRefresh = false
+local requestRescan
+local refreshRequested, reloadCatalogue = false, false
 
 local function summarizeSearchStats(stats)
 	if type(stats) ~= "table" then return nil end
 	return string.format(
-		"checked=%d, rows=%d, itemInfo=%d, level=%d, armor=%d, weapon=%d, equip=%d, score=%d, upgrade=%d, slot=%d",
+		"checked=%d, rows=%d, itemInfo=%d, level=%d, armor=%d, weapon=%d, equip=%d, upgrade=%d, slot=%d",
 		stats.checked or 0,
 		stats.rows or 0,
 		stats.missingItemInfo or 0,
@@ -929,7 +730,6 @@ local function summarizeSearchStats(stats)
 		stats.blockedByArmorType or 0,
 		stats.blockedByWeaponType or 0,
 		stats.blockedByEquip or 0,
-		stats.blockedByScore or 0,
 		stats.blockedByUpgrade or 0,
 		stats.blockedBySlot or 0
 	)
@@ -938,17 +738,6 @@ end
 local function resetSearchButton()
 	searchBtn:SetText("Search")
 	searchBtn:Enable()
-end
-
-local function scheduleSearchAfterItemInfo()
-	if pendingQueryRefresh then return end
-	pendingQueryRefresh = true
-	Query.RegisterDone(function()
-		pendingQueryRefresh = false
-		if frame:IsShown() then
-			Search.DoSearch()
-		end
-	end)
 end
 
 local function buildUpgradeRows(slotStates)
@@ -978,18 +767,15 @@ local function processSearchTask(state, maxOps)
 		ops = ops + 1
 		state.stats.checked = state.stats.checked + 1
 
-		local itemMetadata = state.itemMeta[itemID]
-		local itemInfo, raw, fallbackID = resolveSearchItemInfo(itemID, itemMetadata)
+		local itemInfo, raw = resolveSearchItemInfo(itemID)
 		if not itemInfo then
-			if not queueMissingItemInfo(itemID, fallbackID) then
-				state.skippedItemInfo = true
-			end
+			queueMissingItemInfo(itemID)
 			state.missingItemInfo = true
 			state.stats.missingItemInfo = state.stats.missingItemInfo + 1
 		else
 			local reqLevel = tonumber(itemInfo.requiredLevel) or 0
 			local blockedByArmorType = false
-			if state.hasArmorTypeFilter and type(addon.NormalizeArmorType) == "function" then
+			if state.hasArmorTypeFilter then
 				local armorTypeKey = addon.NormalizeArmorType(itemInfo.itemType, itemInfo.subType)
 				if armorTypeKey and not isArmorTypeFilterExemptSlot(itemInfo.invType) and not state.armorTypeFilter[armorTypeKey] then
 					blockedByArmorType = true
@@ -998,11 +784,8 @@ local function processSearchTask(state, maxOps)
 			end
 
 			local blockedByWeaponType = false
-			if state.hasWeaponTypeFilter and type(addon.IsWeaponTypeFilterRelevant) == "function" and addon.IsWeaponTypeFilterRelevant(itemInfo.itemType, itemInfo.invType) then
-				local weaponTypeKey = nil
-				if type(addon.NormalizeWeaponType) == "function" then
-					weaponTypeKey = addon.NormalizeWeaponType(itemInfo.itemType, itemInfo.subType, itemInfo.invType)
-				end
+			if state.hasWeaponTypeFilter and addon.IsWeaponTypeFilterRelevant(itemInfo.itemType, itemInfo.invType) then
+				local weaponTypeKey = addon.NormalizeWeaponType(itemInfo.itemType, itemInfo.subType, itemInfo.invType)
 				if not weaponTypeKey or not state.weaponTypeFilter[weaponTypeKey] then
 					blockedByWeaponType = true
 					state.stats.blockedByWeaponType = state.stats.blockedByWeaponType + 1
@@ -1016,33 +799,27 @@ local function processSearchTask(state, maxOps)
 
 			if not blockedByArmorType and not blockedByWeaponType and not blockedByLevel then
 				local itemLink = itemInfo.link or itemInfo.raw or raw
-				local equipOptions = itemMetadata and itemMetadata.ignoreClassRestriction and IGNORE_CLASS_RESTRICTION_EQUIP_OPTIONS or nil
-				if addon.CanPlayerEquip(itemLink, equipOptions) then
+				if addon.CanPlayerEquip(itemLink) then
 					local score = addon.CalculateScore(itemLink, state.profileName)
-					if score and score >= 5 then
-						local sources = state.itemSources[itemID] or {}
-						local metadata, sourceDifficultyOverride = resolveDisplayMetadata(itemLink, itemMetadata)
-						local rowData = makeRowData(itemID, itemInfo.raw or raw, itemLink, itemInfo.rarity, itemInfo.name, itemInfo.icon, score, sources, metadata, sourceDifficultyOverride)
+					local sources = state.itemSources[itemID] or {}
+					local rowData = makeRowData(itemID, itemInfo.raw or raw, itemLink, itemInfo.rarity, itemInfo.name, itemInfo.icon, score, sources)
 
-						if state.isUpgradeSearch then
-							if addon.IsUpgrade(itemLink, state.profileName) then
-								for _, slotState in ipairs(state.upgradeSlotStates) do
-									if belongsToSlot(itemInfo.invType, slotState.inv) then
-										insertTop(slotState.results, rowData, LIST_UPGRADES_MAX)
-										state.stats.rows = state.stats.rows + 1
-									end
+					if state.isUpgradeSearch then
+						if addon.IsUpgrade(itemLink, state.profileName) then
+							for _, slotState in ipairs(state.upgradeSlotStates) do
+								if belongsToSlot(itemInfo.invType, slotState.inv) then
+									insertTop(slotState.results, rowData, LIST_UPGRADES_MAX)
+									state.stats.rows = state.stats.rows + 1
 								end
-							else
-								state.stats.blockedByUpgrade = state.stats.blockedByUpgrade + 1
 							end
-						elseif belongsToSlot(itemInfo.invType, state.slotInvTypes) then
-							insertTop(state.results, rowData, LIST_SLOT_MAX)
-							state.stats.rows = state.stats.rows + 1
 						else
-							state.stats.blockedBySlot = state.stats.blockedBySlot + 1
+							state.stats.blockedByUpgrade = state.stats.blockedByUpgrade + 1
 						end
+					elseif belongsToSlot(itemInfo.invType, state.slotInvTypes) then
+						insertTop(state.results, rowData, LIST_SLOT_MAX)
+						state.stats.rows = state.stats.rows + 1
 					else
-						state.stats.blockedByScore = state.stats.blockedByScore + 1
+						state.stats.blockedBySlot = state.stats.blockedBySlot + 1
 					end
 				else
 					state.stats.blockedByEquip = state.stats.blockedByEquip + 1
@@ -1068,6 +845,7 @@ local function finishSearchTask(state)
 	searchWorker:SetScript("OnUpdate", nil)
 
 	local rowsData = state.finalRows or {}
+	lastResults = rowsData
 	lastSearchStats = state.stats
 	if Query.IsBusy() then
 		if #rowsData > 0 then
@@ -1078,23 +856,30 @@ local function finishSearchTask(state)
 			})
 		end
 		resetSearchButton()
-		scheduleSearchAfterItemInfo()
+		requestRescan()
 		return
 	end
 
 	resetSearchButton()
 	if #rowsData == 0 then
-		local detail = summarizeSearchStats(state.stats)
-		local label = state.missingItemInfo and "No data found (some item info unavailable)." or "No data found"
-		if detail then
-			label = label .. " " .. detail
+		local label = state.isUpgradeSearch and "No upgrades found." or "No matching items."
+		local messages = { { isHeader = true, label = label } }
+		if state.stats.blockedByLevel > 0 then
+			messages[#messages + 1] = { isHeader = true, label = "Max Lvl excludes items." }
 		end
-		refreshRows({
-			{ isHeader = true, label = label },
-		})
+		if state.missingItemInfo then
+			messages[#messages + 1] = { isHeader = true, label = "Some item data is unavailable." }
+		end
+		refreshRows(messages)
 	else
 		refreshRows(rowsData)
 	end
+end
+
+local function advanceSearch(state)
+	local done = processSearchTask(state, state.opsBudget)
+	if done then finishSearchTask(state) end
+	return done
 end
 
 local function searchWorkerOnUpdate()
@@ -1105,7 +890,17 @@ local function searchWorkerOnUpdate()
 	end
 
 	local startMs = nowMillis()
-	local done = processSearchTask(state, state.opsBudget)
+	local run = state.cacheOnly and Query.TryWithoutRequests or pcall
+	local ok, done = run(advanceSearch, state)
+	if not ok then
+		searchState = nil
+		searchWorker:SetScript("OnUpdate", nil)
+		resetSearchButton()
+		print("ItemScore: search failed: " .. tostring(done))
+		refreshRows({ { isHeader = true, label = "Search failed. See the chat message for details." } })
+		return
+	end
+	if done then return end
 	local elapsedMs = nowMillis() - startMs
 	state.opsBudget = tuneBudget(state.opsBudget, elapsedMs, state.targetMs)
 
@@ -1118,12 +913,9 @@ local function searchWorkerOnUpdate()
 	end
 	searchBtn:SetText(string.format("Search %d%%", percent))
 
-	if done then
-		finishSearchTask(state)
-	end
 end
 
-local function startSearchTask(profileName, slotLabel, catalog)
+local function startSearchTask(profileName, slotLabel, catalog, cacheOnly)
 	local settings = getSourceSettingsSafe()
 	local maxRequiredLevel = normalizeMaxRequiredLevel(settings.searchMaxRequiredLevel)
 	local hasArmorTypeFilter, armorTypeFilter = getArmorTypeFilterForProfile(profileName)
@@ -1133,15 +925,14 @@ local function startSearchTask(profileName, slotLabel, catalog)
 	end
 
 	searchState = {
+		cacheOnly = cacheOnly,
 		profileName = profileName,
 		slotLabel = slotLabel,
 		itemIDs = (catalog and catalog.itemIDs) or {},
 		itemSources = (catalog and catalog.itemSources) or {},
-		itemMeta = (catalog and catalog.itemMeta) or {},
 		total = #((catalog and catalog.itemIDs) or {}),
 		index = 1,
 		missingItemInfo = false,
-		skippedItemInfo = false,
 		opsBudget = 220,
 		targetMs = 5,
 		maxRequiredLevel = maxRequiredLevel,
@@ -1159,7 +950,6 @@ local function startSearchTask(profileName, slotLabel, catalog)
 			blockedByArmorType = 0,
 			blockedByWeaponType = 0,
 			blockedByEquip = 0,
-			blockedByScore = 0,
 			blockedByUpgrade = 0,
 			blockedBySlot = 0,
 		},
@@ -1186,18 +976,21 @@ end
 --------------------------------------------------
 -- Search entrypoint
 --------------------------------------------------
-local function doSearch()
+local function doSearch(cacheOnly)
 	if not frame:IsShown() then return end
-
-	clearMaxLevelEditFocus()
-	applyMaxLevelFilterValue()
-	applyMaxLevelFilterEnabled()
+	searchState = nil
+	searchWorker:SetScript("OnUpdate", nil)
 
 	if not selectedProfile or not selectedSlot then return end
 
 	local catalog, cacheStatus = getCatalogAndStatus()
+	if cacheStatus.lastError then
+		refreshRows({ { isHeader = true, label = cacheStatus.lastError } })
+		resetSearchButton()
+		return
+	end
 	if cacheStatus.settingsChanged then
-		if cacheStatus.enabledProviderCount > 0 then
+		if cacheStatus.enabledProviderCount > 0 and not cacheStatus.updating then
 			refreshCacheSafe(true, true)
 			catalog, cacheStatus = getCatalogAndStatus()
 		end
@@ -1210,7 +1003,7 @@ local function doSearch()
 		end
 	end
 
-	if #(catalog.itemIDs or {}) == 0 and cacheStatus.enabledProviderCount > 0 and not cacheStatus.updating then
+	if not catalog.builtAt and cacheStatus.enabledProviderCount > 0 and not cacheStatus.updating then
 		refreshCacheSafe(true, true)
 		catalog, cacheStatus = getCatalogAndStatus()
 	end
@@ -1223,11 +1016,18 @@ local function doSearch()
 		return
 	end
 
-	startSearchTask(selectedProfile, selectedSlot, catalog)
+	startSearchTask(selectedProfile, selectedSlot, catalog, cacheOnly)
 end
 
-Search.DoSearch = doSearch
-searchBtn:SetScript("OnClick", doSearch)
+function Search.DoSearch()
+	if not frame:IsShown() then return end
+	clearMaxLevelEditFocus()
+	applyMaxLevelFilterValue()
+	applyMaxLevelFilterEnabled()
+	refreshRequested, reloadCatalogue = false, false
+	doSearch(false)
+end
+searchBtn:SetScript("OnClick", Search.DoSearch)
 
 function Search.Toggle()
 	if frame:IsShown() then
@@ -1244,206 +1044,70 @@ end
 --------------------------------------------------
 -- Slash commands
 --------------------------------------------------
-local function printHelp()
-	print("|cff00ff00ItemScore Search Commands|r")
-	print("/is                  - Toggle search window")
-	print("/is refresh          - Rebuild local search cache now")
-	print("/is status           - Show cache/provider status")
-	print("/is searchstatus     - Show last search filter counters")
-	print("/is lootcollector on|off")
-	print("/is atlas on|off")
-	print("/is atlas classic on|off")
-	print("/is atlas tbc on|off")
-	print("/is atlas wrath on|off")
-	print("/is atlas raid on|off  (enable/disable all raids and Tier Sets)")
-	print("/is atlas place on <Area Name>")
-	print("/is atlas place off <Area Name>")
-	print("/is atlas place list")
-	print("/is atlas place all")
-end
-
-local function setAtlasOption(optionKey, valueString)
-	local parsed, boolValue = parseBoolean(valueString)
-	if not parsed then
-		print("ItemScore: use on/off.")
-		return
-	end
-
-	local changed = setSourceOptionSafe(optionKey, boolValue)
-	if changed then
-		queueRefreshSafe("atlas_option:" .. optionKey)
-		refreshCacheSafe(true, true)
-	end
-	print(string.format("ItemScore: %s = %s", optionKey, boolValue and "on" or "off"))
-end
-
 SLASH_ISSEARCH1 = "/is"
 SlashCmdList["ISSEARCH"] = function(msg)
 	msg = trim(msg) or ""
-	if msg == "" or msg == "search" then
-		Search.Toggle()
-		return
-	end
-
-	if msg == "refresh" then
-		refreshCacheSafe(true, false)
-		return
-	end
-
-	if msg == "status" then
-		local status = getStatusSafe()
-		print(string.format("ItemScore: cache items=%d, stale=%s, updating=%s", status.itemCount, tostring(status.stale), tostring(status.updating)))
-		print(string.format("ItemScore: providers enabled=%d, available=%d", status.enabledProviderCount, status.availableProviderCount))
-		for providerKey, providerStatus in pairs(status.providers or {}) do
-			local adapterText = providerStatus.adapterLabel or providerStatus.adapter or "n/a"
-			local detailText = providerStatus.reason and (" - " .. providerStatus.reason) or ""
-			print(string.format(
-				"ItemScore: %s enabled=%s, available=%s, adapter=%s%s",
-				tostring(providerKey),
-				tostring(providerStatus.enabled),
-				tostring(providerStatus.available),
-				tostring(adapterText),
-				detailText
-			))
-			local last = providerStatus.last
-			if type(last) == "table" then
-				local parts = {}
-				local keys = { "items", "sources", "discoveries", "worldforgedDiscoveries", "worldforgedMappings", "vendorItems", "mappingCount", "tables", "scannedMenus", "missingItemTables" }
-				for _, key in ipairs(keys) do
-					if last[key] ~= nil then
-						parts[#parts + 1] = key .. "=" .. tostring(last[key])
-					end
-				end
-				if last.realmKey then
-					parts[#parts + 1] = "realm=" .. tostring(last.realmKey)
-				end
-				if last.adapter then
-					parts[#parts + 1] = "lastAdapter=" .. tostring(last.adapter)
-				end
-				if #parts > 0 then
-					print("ItemScore: " .. tostring(providerKey) .. " last " .. table.concat(parts, ", "))
-				end
-				if last.error then
-					print("ItemScore: " .. tostring(providerKey) .. " error: " .. tostring(last.error))
-				elseif last.reason then
-					print("ItemScore: " .. tostring(providerKey) .. " reason: " .. tostring(last.reason))
-				end
-			end
-		end
-		if status.currentProvider then
-			print("ItemScore: currently processing provider: " .. tostring(status.currentProvider))
-		end
-		if status.lastError then
-			print("ItemScore: last cache error: " .. status.lastError)
-		end
-		return
-	end
-
-	if msg == "searchstatus" or msg == "searchdiag" then
-		local detail = summarizeSearchStats(lastSearchStats)
-		if detail then
-			print("ItemScore: last search " .. detail)
-		else
-			print("ItemScore: no search has completed yet.")
-		end
-		return
-	end
-
-	local lootCollectorArg = msg:match("^lootcollector%s+(.+)$") or msg:match("^lc%s+(.+)$")
-	if lootCollectorArg then
-		setAtlasOption("useLootCollector", lootCollectorArg)
-		return
-	end
-
-	local atlasArgs = msg:match("^atlas%s+(.+)$")
-	if atlasArgs then
-		local token, remainder = atlasArgs:match("^(%S+)%s*(.-)$")
-		token = string.lower(token or "")
-		remainder = trim(remainder) or ""
-
-		if token == "on" or token == "off" then
-			setAtlasOption("useAtlasLoot", token)
-			return
-		end
-
-		if token == "classic" then
-			setAtlasOption("atlasClassic", remainder)
-			return
-		end
-
-		if token == "tbc" then
-			setAtlasOption("atlasTBC", remainder)
-			return
-		end
-
-		if token == "wrath" then
-			setAtlasOption("atlasWrath", remainder)
-			return
-		end
-
-		if token == "dungeon" then
-			print("ItemScore: dungeons are always enabled for active expansions.")
-			return
-		end
-
-		if token == "raid" then
-			local parsed, enabled = parseBoolean(remainder)
-			if not parsed then
-				print("ItemScore: use /is atlas raid on|off")
-				return
-			end
-			local changed = setAllAtlasRaidsEnabledSafe(enabled)
-			if changed then
-				queueRefreshSafe("atlas_raid_all")
-				refreshCacheSafe(true, true)
-			end
-			print(string.format("ItemScore: all AtlasLoot raids and Tier Sets %s.", enabled and "enabled" or "disabled"))
-			return
-		end
-
-		if token == "place" then
-			local action, placeName = remainder:match("^(%S+)%s*(.-)$")
-			action = string.lower(action or "")
-			placeName = trim(placeName)
-
-			if action == "list" then
-				local disabledPlaces = getDisabledPlacesSafe()
-				if #disabledPlaces == 0 then
-					print("ItemScore: no disabled AtlasLoot areas.")
-				else
-					print("ItemScore: disabled AtlasLoot areas:")
-					for _, name in ipairs(disabledPlaces) do
-						print(" - " .. name)
-					end
-				end
-				return
-			end
-
-			if action == "all" then
-				local places = getKnownPlacesSafe()
-				if #places == 0 then
-					print("ItemScore: no cached places available yet. Run /is refresh first.")
-				else
-					print("ItemScore: known cached places:")
-					for _, name in ipairs(places) do
-						print(" - " .. name)
-					end
-				end
-				return
-			end
-
-			if (action == "on" or action == "off") and placeName then
-				local enabled = action == "on"
-				local changed = setAtlasPlaceEnabledSafe(placeName, enabled)
-				if changed then
-					queueRefreshSafe("atlas_place:" .. action)
-					refreshCacheSafe(true, true)
-				end
-				print(string.format("ItemScore: AtlasLoot area '%s' %s.", placeName, enabled and "enabled" or "disabled"))
-				return
-			end
-		end
-	end
-
-	printHelp()
+	if msg == "" or msg == "search" then Search.Toggle()
+	elseif msg == "refresh" then addon.RefreshSearchCache(true, false)
+	elseif msg == "status" then
+		local status = addon.GetSearchCacheStatus()
+		print(string.format("ItemScore: items=%d, updating=%s, stale=%s", status.itemCount, tostring(status.updating), tostring(status.stale)))
+		if status.lastError then print("ItemScore: " .. status.lastError) end
+	elseif msg == "searchstatus" then
+		print("ItemScore: " .. (summarizeSearchStats(lastSearchStats) or "No search completed yet."))
+	else print("ItemScore: /is, /is refresh, /is status, /is searchstatus. Configure sources with /itemscore.") end
 end
+
+local refreshDriver = CreateFrame("Frame")
+requestRescan = function(catalogueChanged)
+	if not frame:IsShown() then return end
+	refreshRequested = true
+	reloadCatalogue = reloadCatalogue or catalogueChanged == true
+	refreshDriver:SetScript("OnUpdate", function()
+		if not refreshRequested or not frame:IsShown() then
+			refreshRequested, reloadCatalogue = false, false
+			refreshDriver:SetScript("OnUpdate", nil)
+		elseif not searchState and not Query.IsBusy() then
+			local cacheOnly = not reloadCatalogue
+			refreshRequested, reloadCatalogue = false, false
+			refreshDriver:SetScript("OnUpdate", nil)
+			doSearch(cacheOnly)
+		end
+	end)
+end
+Query.Subscribe(requestRescan)
+addon.SubscribeSearchCatalog(function() requestRescan(true) end)
+frame:HookScript("OnHide", function()
+	searchState = nil
+	searchWorker:SetScript("OnUpdate", nil)
+	resetSearchButton()
+end)
+
+-- Read-only diagnostics and a validated entrypoint for repeatable searches.
+function Search.GetLastStats() return lastSearchStats end
+function Search.Run(profileName, slotLabel)
+	assert(slotLabel == "Upgrades" or slotLabelToInv[slotLabel], "Unknown equipment slot")
+	selectedProfile, selectedSlot = profileName, slotLabel
+	UIDropDownMenu_SetSelectedValue(profileDrop, profileName)
+	UIDropDownMenu_SetSelectedValue(slotDrop, slotLabel)
+	refreshMaxLevelFilterControls()
+	frame:Show()
+	Search.DoSearch()
+end
+
+local lifecycle = CreateFrame("Frame")
+lifecycle:RegisterEvent("ADDON_LOADED")
+lifecycle:SetScript("OnEvent", function(_, _, name)
+	if name ~= addonName then return end
+	windowSettings = getWindowSettings()
+	frame:ClearAllPoints()
+	frame:SetPoint(windowSettings.point or "CENTER", UIParent, windowSettings.relativePoint or "CENTER", tonumber(windowSettings.x) or 0, tonumber(windowSettings.y) or 0)
+	frame:SetSize(validDimension(windowSettings.width, DEFAULT_WIDTH), validDimension(windowSettings.height, DEFAULT_HEIGHT))
+end)
+frame:HookScript("OnShow", function()
+	local profiles = addon.GetProfiles()
+	local found = false
+	for _, name in ipairs(profiles) do if selectedProfile == name then found = true; break end end
+	if not found then selectedProfile = profiles[1] end
+	UIDropDownMenu_SetSelectedValue(profileDrop, selectedProfile)
+end)

@@ -1,1135 +1,187 @@
+-- Owns source selection, cache migration and atomic, frame-budgeted catalogue publication.
+-- The adapter emits IDs and provenance; the manager never interprets AtlasLoot tables.
 local addonName, addon = ...
+local SCHEMA = 10
+local settings, cache, choices
+local worker, rebuildQueued, refreshAgain, lastError = nil, false, false, nil
+local listeners = {}
+local driver = CreateFrame("Frame")
+local EMPTY = { itemIDs = {}, itemSources = {} }
 
--- Search source manager: owns provider registration, cache fingerprints, background rebuilds, and provider status.
-local CACHE_SCHEMA_VERSION = 9
-local CACHE_REFRESH_INTERVAL_SECONDS = 24 * 60 * 60
-local MAX_DUNGEON_MYTHIC_LEVEL_FALLBACK = 40
-local RAID_DIFFICULTY_NORMAL = 3
-local RAID_DIFFICULTY_HEROIC = 4
-local RAID_DIFFICULTY_MYTHIC = 5
-local RAID_DIFFICULTY_ASCENDED = 6
-local DEFAULT_ATLAS_RAID_MAX_DIFFICULTY = RAID_DIFFICULTY_MYTHIC
-
-local RAID_DIFFICULTY_CHOICES = {
-	{ value = RAID_DIFFICULTY_NORMAL, label = "Normal" },
-	{ value = RAID_DIFFICULTY_HEROIC, label = "Heroic" },
-	{ value = RAID_DIFFICULTY_MYTHIC, label = "Mythic" },
-	{ value = RAID_DIFFICULTY_ASCENDED, label = "Ascended" },
-}
-
-local providers = {}
-local providerOrder = {}
-local runtime = {
-	updating = false,
-	pendingRefresh = false,
-	queuedRefreshAfterUpdate = false,
-	lastError = nil,
-	forceRefresh = false,
-	task = nil,
-}
-
-local EMPTY_CATALOG = {
-	itemIDs = {},
-	itemSources = {},
-	itemMeta = {},
-	byPlace = {},
-	builtAt = 0,
-	providerStats = {},
-}
-
-local function trim(value)
-	if type(value) ~= "string" then return nil end
-	local text = string.gsub(value, "^%s+", "")
-	text = string.gsub(text, "%s+$", "")
-	if text == "" then return nil end
-	return text
+local function initialize()
+    if settings then return end
+    ItemScoreData = ItemScoreData or {}
+    local old = type(ItemScoreData.searchSources) == "table" and ItemScoreData.searchSources or {}
+    settings = {
+        useAtlasLoot = old.useAtlasLoot ~= false,
+        searchUseMaxRequiredLevel = old.searchUseMaxRequiredLevel ~= false,
+        searchMaxRequiredLevel = math.max(0, math.min(60, tonumber(old.searchMaxRequiredLevel) or UnitLevel("player"))),
+        disabledSources = old.schema == SCHEMA and old.disabledSources or {},
+        schema = SCHEMA,
+    }
+    if type(settings.disabledSources) ~= "table" then settings.disabledSources = {} end
+    ItemScoreData.searchSources = settings
+    if type(ItemScoreCacheDB) ~= "table" or ItemScoreCacheDB.schema ~= SCHEMA then
+        ItemScoreCacheDB = { schema = SCHEMA }
+    end
+    cache = ItemScoreCacheDB
+    choices = cache.choices or {}
 end
 
-local function stripColorCodes(text)
-	text = tostring(text or "")
-	text = string.gsub(text, "|c%x%x%x%x%x%x%x%x", "")
-	text = string.gsub(text, "|r", "")
-	text = string.gsub(text, "|T.-|t", "")
-	return trim(text)
+local function fingerprint()
+    initialize()
+    local parts = { addon.AtlasLootSource.GetIdentity(), GetLocale(), UnitFactionGroup("player") or "", tostring(settings.useAtlasLoot) }
+    local disabled = {}
+    for key, value in pairs(settings.disabledSources) do if value then disabled[#disabled + 1] = key end end
+    table.sort(disabled)
+    for _, key in ipairs(disabled) do parts[#parts + 1] = key end
+    return table.concat(parts, "\n")
 end
 
-local function normalizeAtlasDungeonMaxMythicLevel(value)
-	local numeric = math.floor(tonumber(value) or 0)
-	if numeric < 0 then numeric = 0 end
-	return numeric
+local function notify()
+    for _, callback in ipairs(listeners) do
+        local ok, err = pcall(callback)
+        if not ok then geterrorhandler()("ItemScore catalogue callback: " .. tostring(err)) end
+    end
 end
 
-local function normalizeAtlasRaidMaxDifficulty(value)
-	local numeric = math.floor(tonumber(value) or DEFAULT_ATLAS_RAID_MAX_DIFFICULTY)
-	if numeric < RAID_DIFFICULTY_NORMAL then numeric = RAID_DIFFICULTY_NORMAL end
-	if numeric > RAID_DIFFICULTY_ASCENDED then numeric = RAID_DIFFICULTY_ASCENDED end
-	return numeric
+function addon.SubscribeSearchCatalog(callback)
+    assert(type(callback) == "function", "Catalogue callback required")
+    listeners[#listeners + 1] = callback
 end
 
-local function defaultSourceSettings()
-	return {
-		useLootCollector = true,
-		useAtlasLoot = true,
-		searchUseMaxRequiredLevel = false,
-		searchMaxRequiredLevel = 0,
-		searchMaxRequiredLevelUserSet = false,
-		atlasClassic = true,
-		atlasTBC = false,
-		atlasWrath = false,
-		atlasDungeonMaxMythicLevel = 0,
-		atlasDungeonHighestMythicOnly = true,
-		atlasRaidMaxDifficulty = DEFAULT_ATLAS_RAID_MAX_DIFFICULTY,
-		atlasDisabledPlaces = {},
-		atlasDisabledRaids = {},
-		atlasDisabledFactions = {},
-		atlasDisabledCrafting = {},
-		worldforgedZG = true,
-		worldforgedMC = true,
-		worldforgedBWL = true,
-		worldforgedNaxx = true,
-	}
+function addon.GetSearchSourceSettings() initialize(); return settings end
+function addon.GetSearchSourceChoices() initialize(); return choices end
+
+function addon.SetSearchSourceOption(key, value)
+    initialize()
+    assert(key == "useAtlasLoot" or key == "searchUseMaxRequiredLevel" or key == "searchMaxRequiredLevel", "Unknown source setting: " .. tostring(key))
+    if key == "searchMaxRequiredLevel" then value = math.max(0, math.min(60, math.floor(tonumber(value) or 0)))
+    else value = not not value end
+    if settings[key] == value then return false end
+    settings[key] = value
+    if key == "useAtlasLoot" then addon.QueueSearchCacheRefresh() end
+    return true
 end
 
-local function ensureSettings()
-	if not ItemScoreData then ItemScoreData = {} end
-	ItemScoreData.searchSources = ItemScoreData.searchSources or {}
-
-	local defaults = defaultSourceSettings()
-	for key, value in pairs(defaults) do
-		if ItemScoreData.searchSources[key] == nil then
-			if type(value) == "table" then
-				ItemScoreData.searchSources[key] = {}
-			else
-				ItemScoreData.searchSources[key] = value
-			end
-		end
-	end
-
-	if type(ItemScoreData.searchSources.atlasDisabledPlaces) ~= "table" then
-		ItemScoreData.searchSources.atlasDisabledPlaces = {}
-	end
-	if type(ItemScoreData.searchSources.atlasDisabledRaids) ~= "table" then
-		ItemScoreData.searchSources.atlasDisabledRaids = {}
-	end
-	if type(ItemScoreData.searchSources.atlasDisabledFactions) ~= "table" then
-		ItemScoreData.searchSources.atlasDisabledFactions = {}
-	end
-	if type(ItemScoreData.searchSources.atlasDisabledCrafting) ~= "table" then
-		ItemScoreData.searchSources.atlasDisabledCrafting = {}
-	end
-	ItemScoreData.searchSources.atlasDungeonMaxMythicLevel = normalizeAtlasDungeonMaxMythicLevel(ItemScoreData.searchSources.atlasDungeonMaxMythicLevel)
-	ItemScoreData.searchSources.atlasRaidMaxDifficulty = normalizeAtlasRaidMaxDifficulty(ItemScoreData.searchSources.atlasRaidMaxDifficulty)
-	ItemScoreData.searchSources.searchMaxRequiredLevel = tonumber(ItemScoreData.searchSources.searchMaxRequiredLevel) or 0
-	if ItemScoreData.searchSources.searchMaxRequiredLevel < 0 then
-		ItemScoreData.searchSources.searchMaxRequiredLevel = 0
-	end
-	if ItemScoreData.searchSources.searchMaxRequiredLevel > 80 then
-		ItemScoreData.searchSources.searchMaxRequiredLevel = 80
-	end
-
-	if type(ItemScoreData.searchSources.searchMaxRequiredLevelUserSet) ~= "boolean" then
-		ItemScoreData.searchSources.searchMaxRequiredLevelUserSet = ItemScoreData.searchSources.searchMaxRequiredLevel > 0
-	end
-
-	if not ItemScoreData.searchSources.searchMaxRequiredLevelUserSet and type(UnitLevel) == "function" then
-		local playerLevel = tonumber(UnitLevel("player")) or 0
-		if playerLevel > 0 then
-			if playerLevel > 80 then playerLevel = 80 end
-			ItemScoreData.searchSources.searchMaxRequiredLevel = playerLevel
-		end
-	end
-
-	return ItemScoreData.searchSources
-end
-
-local function snapshotSettings(settings)
-	return {
-		useLootCollector = settings.useLootCollector and true or false,
-		useAtlasLoot = settings.useAtlasLoot and true or false,
-		searchUseMaxRequiredLevel = settings.searchUseMaxRequiredLevel and true or false,
-		searchMaxRequiredLevel = tonumber(settings.searchMaxRequiredLevel) or 0,
-		searchMaxRequiredLevelUserSet = settings.searchMaxRequiredLevelUserSet and true or false,
-		atlasClassic = settings.atlasClassic and true or false,
-		atlasTBC = settings.atlasTBC and true or false,
-		atlasWrath = settings.atlasWrath and true or false,
-		atlasDungeonMaxMythicLevel = normalizeAtlasDungeonMaxMythicLevel(settings.atlasDungeonMaxMythicLevel),
-		atlasDungeonHighestMythicOnly = settings.atlasDungeonHighestMythicOnly ~= false,
-		atlasRaidMaxDifficulty = normalizeAtlasRaidMaxDifficulty(settings.atlasRaidMaxDifficulty),
-		worldforgedZG = settings.worldforgedZG and true or false,
-		worldforgedMC = settings.worldforgedMC and true or false,
-		worldforgedBWL = settings.worldforgedBWL and true or false,
-		worldforgedNaxx = settings.worldforgedNaxx and true or false,
-		atlasDisabledPlaces = (function()
-			local copy = {}
-			for key, value in pairs(settings.atlasDisabledPlaces or {}) do
-				copy[key] = value and true or nil
-			end
-			return copy
-		end)(),
-		atlasDisabledRaids = (function()
-			local copy = {}
-			for key, value in pairs(settings.atlasDisabledRaids or {}) do
-				copy[key] = value and true or nil
-			end
-			return copy
-		end)(),
-		atlasDisabledFactions = (function()
-			local copy = {}
-			for key, value in pairs(settings.atlasDisabledFactions or {}) do
-				copy[key] = value and true or nil
-			end
-			return copy
-		end)(),
-		atlasDisabledCrafting = (function()
-			local copy = {}
-			for expansionKey, disabledSources in pairs(settings.atlasDisabledCrafting or {}) do
-				if type(disabledSources) == "table" then
-					copy[expansionKey] = {}
-					for sourceName, value in pairs(disabledSources) do
-						copy[expansionKey][sourceName] = value and true or nil
-					end
-				end
-			end
-			return copy
-		end)(),
-	}
-end
-
-local function ensureCache()
-	if type(ItemScoreCacheDB) ~= "table" then ItemScoreCacheDB = {} end
-	if ItemScoreCacheDB.schemaVersion ~= CACHE_SCHEMA_VERSION then
-		ItemScoreCacheDB = {
-			schemaVersion = CACHE_SCHEMA_VERSION,
-			lastBuildAt = 0,
-			settingsFingerprint = "",
-			catalog = EMPTY_CATALOG,
-			providerStats = {},
-		}
-	end
-
-	if type(ItemScoreCacheDB.catalog) ~= "table" then
-		ItemScoreCacheDB.catalog = EMPTY_CATALOG
-	end
-	if type(ItemScoreCacheDB.catalog.itemIDs) ~= "table" then
-		ItemScoreCacheDB.catalog.itemIDs = {}
-	end
-	if type(ItemScoreCacheDB.catalog.itemSources) ~= "table" then
-		ItemScoreCacheDB.catalog.itemSources = {}
-	end
-	if type(ItemScoreCacheDB.catalog.itemMeta) ~= "table" then
-		ItemScoreCacheDB.catalog.itemMeta = {}
-	end
-	if type(ItemScoreCacheDB.catalog.byPlace) ~= "table" then
-		ItemScoreCacheDB.catalog.byPlace = {}
-	end
-	if type(ItemScoreCacheDB.providerStats) ~= "table" then
-		ItemScoreCacheDB.providerStats = {}
-	end
-
-	ItemScoreCacheDB.lastBuildAt = tonumber(ItemScoreCacheDB.lastBuildAt) or 0
-	ItemScoreCacheDB.settingsFingerprint = ItemScoreCacheDB.settingsFingerprint or ""
-	return ItemScoreCacheDB
-end
-
-local function settingsFingerprint(settings)
-	local disabledPlaces = {}
-	for placeName, disabled in pairs(settings.atlasDisabledPlaces or {}) do
-		if disabled then
-			local clean = stripColorCodes(placeName)
-			if clean then disabledPlaces[#disabledPlaces + 1] = clean end
-		end
-	end
-	table.sort(disabledPlaces)
-
-	local disabledRaids = {}
-	for raidName, disabled in pairs(settings.atlasDisabledRaids or {}) do
-		if disabled then
-			local clean = stripColorCodes(raidName)
-			if clean then disabledRaids[#disabledRaids + 1] = clean end
-		end
-	end
-	table.sort(disabledRaids)
-
-	local disabledFactions = {}
-	for factionName, disabled in pairs(settings.atlasDisabledFactions or {}) do
-		if disabled then
-			local clean = stripColorCodes(factionName)
-			if clean then disabledFactions[#disabledFactions + 1] = clean end
-		end
-	end
-	table.sort(disabledFactions)
-
-	local disabledCrafting = {}
-	for expansionKey, disabledSources in pairs(settings.atlasDisabledCrafting or {}) do
-		if type(disabledSources) == "table" then
-			for sourceName, disabled in pairs(disabledSources) do
-				if disabled then
-					local clean = stripColorCodes(sourceName)
-					if clean then disabledCrafting[#disabledCrafting + 1] = tostring(expansionKey) .. ":" .. clean end
-				end
-			end
-		end
-	end
-	table.sort(disabledCrafting)
-
-	local parts = {
-		settings.useLootCollector and "1" or "0",
-		settings.useAtlasLoot and "1" or "0",
-		settings.atlasClassic and "1" or "0",
-		settings.atlasTBC and "1" or "0",
-		settings.atlasWrath and "1" or "0",
-		tostring(normalizeAtlasDungeonMaxMythicLevel(settings.atlasDungeonMaxMythicLevel)),
-		settings.atlasDungeonHighestMythicOnly ~= false and "1" or "0",
-		tostring(normalizeAtlasRaidMaxDifficulty(settings.atlasRaidMaxDifficulty)),
-		settings.worldforgedZG and "1" or "0",
-		settings.worldforgedMC and "1" or "0",
-		settings.worldforgedBWL and "1" or "0",
-		settings.worldforgedNaxx and "1" or "0",
-		table.concat(disabledPlaces, ","),
-		table.concat(disabledRaids, ","),
-		table.concat(disabledFactions, ","),
-		table.concat(disabledCrafting, ","),
-	}
-
-	return table.concat(parts, "|")
-end
-
-local function isCacheSettingsMismatched(settings, cache)
-	return cache.settingsFingerprint ~= settingsFingerprint(settings)
-end
-
-local function scheduleAfter(seconds, callback)
-	if C_Timer and C_Timer.After then
-		C_Timer.After(seconds, callback)
-		return
-	end
-
-	local timerFrame = CreateFrame("Frame")
-	local remaining = tonumber(seconds) or 0
-	timerFrame:SetScript("OnUpdate", function(self, elapsed)
-		remaining = remaining - elapsed
-		if remaining <= 0 then
-			self:SetScript("OnUpdate", nil)
-			callback()
-		end
-	end)
-end
-
-local function nowMillis()
-	if type(debugprofilestop) == "function" then
-		return debugprofilestop()
-	end
-	if type(GetTime) == "function" then
-		return GetTime() * 1000
-	end
-	return 0
-end
-
-local function tuneBudget(currentBudget, elapsedMs, targetMs)
-	return addon.TuneAdaptiveBudget(currentBudget, elapsedMs, targetMs, 20, 10000)
-end
-
-local function providerEnabled(providerKey, settings)
-	if providerKey == "LootCollector" then return settings.useLootCollector end
-	if providerKey == "AtlasLoot" then return settings.useAtlasLoot end
-	return true
-end
-
-local function createCollector()
-	local byPlaceSets = {}
-	local itemSourcesSets = {}
-	local itemMeta = {}
-	local uniqueItemIDs = {}
-	local mappingCount = 0
-
-	local function normalizeMappingMeta(metadata)
-		if type(metadata) ~= "table" then return nil end
-		local difficultyLabel = stripColorCodes(metadata.difficultyLabel)
-		local difficultyRank = tonumber(metadata.difficultyRank)
-		local fallbackItemID = tonumber(metadata.fallbackItemID)
-		local fallbackItemLink = trim(metadata.fallbackItemLink)
-		local fallbackItemName = stripColorCodes(metadata.fallbackItemName)
-		local fallbackItemRarity = tonumber(metadata.fallbackItemRarity)
-		local ignoreClassRestriction = metadata.ignoreClassRestriction and true or false
-		if not difficultyLabel and not difficultyRank and not fallbackItemID and not fallbackItemLink and not fallbackItemName and not fallbackItemRarity and not ignoreClassRestriction then return nil end
-		return {
-			difficultyLabel = difficultyLabel,
-			difficultyRank = difficultyRank,
-			fallbackItemID = fallbackItemID,
-			fallbackItemLink = fallbackItemLink,
-			fallbackItemName = fallbackItemName,
-			fallbackItemRarity = fallbackItemRarity,
-			ignoreClassRestriction = ignoreClassRestriction or nil,
-		}
-	end
-
-	local function mergeItemMeta(itemID, metadata)
-		if not metadata then return end
-		local existing = itemMeta[itemID]
-		if not existing then
-			itemMeta[itemID] = metadata
-			return
-		end
-		if not existing.difficultyLabel and metadata.difficultyLabel then
-			existing.difficultyLabel = metadata.difficultyLabel
-		end
-		if (metadata.difficultyRank or 0) > (existing.difficultyRank or 0) then
-			existing.difficultyRank = metadata.difficultyRank
-			if metadata.difficultyLabel then
-				existing.difficultyLabel = metadata.difficultyLabel
-			end
-		end
-		if not existing.fallbackItemID and metadata.fallbackItemID then
-			existing.fallbackItemID = metadata.fallbackItemID
-		end
-		if not existing.fallbackItemLink and metadata.fallbackItemLink then
-			existing.fallbackItemLink = metadata.fallbackItemLink
-		end
-		if not existing.fallbackItemName and metadata.fallbackItemName then
-			existing.fallbackItemName = metadata.fallbackItemName
-		end
-		if not existing.fallbackItemRarity and metadata.fallbackItemRarity then
-			existing.fallbackItemRarity = metadata.fallbackItemRarity
-		end
-		if metadata.ignoreClassRestriction then
-			existing.ignoreClassRestriction = true
-		end
-	end
-
-	local function addMapping(place, source, itemID, metadata)
-		local numericItemID = tonumber(itemID)
-		if not numericItemID or numericItemID <= 0 then return end
-
-		local placeName = stripColorCodes(place) or "Unknown Zone"
-		local sourceName = stripColorCodes(source) or "Unknown Source"
-		local mappingMeta = normalizeMappingMeta(metadata)
-
-		byPlaceSets[placeName] = byPlaceSets[placeName] or {}
-		byPlaceSets[placeName][sourceName] = byPlaceSets[placeName][sourceName] or {}
-		if not byPlaceSets[placeName][sourceName][numericItemID] then
-			byPlaceSets[placeName][sourceName][numericItemID] = true
-			mappingCount = mappingCount + 1
-		end
-
-		uniqueItemIDs[numericItemID] = true
-		mergeItemMeta(numericItemID, mappingMeta)
-
-		itemSourcesSets[numericItemID] = itemSourcesSets[numericItemID] or {}
-		local key = placeName .. "\031" .. sourceName .. "\031" .. (mappingMeta and mappingMeta.difficultyLabel or "")
-		itemSourcesSets[numericItemID][key] = {
-			place = placeName,
-			source = sourceName,
-			difficultyLabel = mappingMeta and mappingMeta.difficultyLabel or nil,
-		}
-	end
-
-	local function finalize()
-		local itemIDs = {}
-		for itemID in pairs(uniqueItemIDs) do
-			itemIDs[#itemIDs + 1] = itemID
-		end
-		table.sort(itemIDs)
-
-		local itemSources = {}
-		for itemID, sourceSet in pairs(itemSourcesSets) do
-			local list = {}
-			for _, sourceData in pairs(sourceSet) do
-				list[#list + 1] = {
-					place = sourceData.place,
-					source = sourceData.source,
-					difficultyLabel = sourceData.difficultyLabel,
-				}
-			end
-			table.sort(list, function(a, b)
-				if a.place == b.place then
-					if a.source == b.source then
-						return tostring(a.difficultyLabel or "") < tostring(b.difficultyLabel or "")
-					end
-					return a.source < b.source
-				end
-				return a.place < b.place
-			end)
-			itemSources[itemID] = list
-		end
-
-		local byPlace = {}
-		for placeName, sourceMap in pairs(byPlaceSets) do
-			byPlace[placeName] = {}
-			for sourceName, itemIDSet in pairs(sourceMap) do
-				local list = {}
-				for itemID in pairs(itemIDSet) do
-					list[#list + 1] = itemID
-				end
-				table.sort(list)
-				byPlace[placeName][sourceName] = list
-			end
-		end
-
-		return {
-			itemIDs = itemIDs,
-			itemSources = itemSources,
-			itemMeta = itemMeta,
-			byPlace = byPlace,
-			mappingCount = mappingCount,
-		}
-	end
-
-	return addMapping, finalize
-end
-
-local function isCacheStale(settings, cache)
-	if runtime.forceRefresh then return true end
-	if cache.lastBuildAt <= 0 then return true end
-	if (time() - cache.lastBuildAt) >= CACHE_REFRESH_INTERVAL_SECONDS then return true end
-	if isCacheSettingsMismatched(settings, cache) then return true end
-	return false
-end
-
-local function buildTaskDone(task)
-	return task.providerIndex > #providerOrder and task.activeProvider == nil
-end
-
-local function startNextProvider(task)
-	while task.providerIndex <= #providerOrder do
-		local providerKey = providerOrder[task.providerIndex]
-		task.providerIndex = task.providerIndex + 1
-		local provider = providers[providerKey]
-		if not provider then
-			task.providerStats[providerKey] = {
-				ok = false,
-				skipped = true,
-				reason = "missing",
-			}
-		elseif not providerEnabled(providerKey, task.settings) then
-			task.providerStats[providerKey] = {
-				ok = false,
-				skipped = true,
-				reason = "disabled",
-			}
-		else
-			local available = true
-			if type(provider.IsAvailable) == "function" then
-				local ok, isAvailable = pcall(provider.IsAvailable, task.settings)
-				available = ok and (isAvailable ~= false)
-			end
-
-			if not available then
-				task.providerStats[providerKey] = {
-					ok = false,
-					skipped = true,
-					reason = "unavailable",
-				}
-			elseif type(provider.StartCollect) == "function"
-				and type(provider.StepCollect) == "function"
-				and type(provider.FinishCollect) == "function" then
-				local ok, providerState = pcall(provider.StartCollect, task.settings)
-				if not ok then
-					task.providerStats[providerKey] = {
-						ok = false,
-						error = tostring(providerState),
-					}
-				else
-					task.activeProvider = {
-						key = providerKey,
-						provider = provider,
-						state = providerState,
-					}
-					task.currentProviderKey = providerKey
-					return true
-				end
-			elseif type(provider.Collect) == "function" then
-				local ok, statsOrErr = pcall(provider.Collect, task.addMapping, task.settings)
-				if ok then
-					task.providerStats[providerKey] = type(statsOrErr) == "table" and statsOrErr or { ok = true }
-					task.providerStats[providerKey].ok = true
-				else
-					task.providerStats[providerKey] = {
-						ok = false,
-						error = tostring(statsOrErr),
-					}
-				end
-			else
-				task.providerStats[providerKey] = {
-					ok = false,
-					skipped = true,
-					reason = "no_collect_method",
-				}
-			end
-		end
-	end
-
-	task.currentProviderKey = nil
-	return false
-end
-
-local function processTask(task, maxOps)
-	local budget = tonumber(maxOps) or 200
-	if budget < 1 then budget = 1 end
-	local consumed = 0
-
-	while consumed < budget do
-		if not task.activeProvider then
-			if not startNextProvider(task) then
-				return buildTaskDone(task)
-			end
-		end
-
-		local active = task.activeProvider
-		local remaining = budget - consumed
-		local ok, done, usedOrErr = pcall(active.provider.StepCollect, active.state, task.addMapping, remaining, task.settings)
-		if not ok then
-			task.providerStats[active.key] = {
-				ok = false,
-				error = tostring(done),
-			}
-			task.activeProvider = nil
-			task.currentProviderKey = nil
-		else
-			local used = tonumber(usedOrErr) or 1
-			if used < 1 then used = 1 end
-			if used > remaining then used = remaining end
-			consumed = consumed + used
-
-			if done then
-				local finishOk, statsOrErr = pcall(active.provider.FinishCollect, active.state, task.settings)
-				if finishOk then
-					task.providerStats[active.key] = type(statsOrErr) == "table" and statsOrErr or { ok = true }
-					task.providerStats[active.key].ok = true
-				else
-					task.providerStats[active.key] = {
-						ok = false,
-						error = tostring(statsOrErr),
-					}
-				end
-				task.activeProvider = nil
-				task.currentProviderKey = nil
-			end
-		end
-	end
-
-	return buildTaskDone(task)
-end
-
-local function finishTask(task)
-	local cache = ensureCache()
-	local catalog = task.finalizeCollector()
-	catalog.providerStats = task.providerStats
-	catalog.builtAt = time()
-
-	cache.catalog = catalog
-	cache.lastBuildAt = time()
-	cache.providerStats = task.providerStats
-	cache.settingsFingerprint = settingsFingerprint(task.settings)
-
-	runtime.task = nil
-	runtime.updating = false
-	runtime.lastError = nil
-	runtime.forceRefresh = false
-
-	if not task.silent then
-		print(string.format("|cff00ff00ItemScore:|r search cache updated (%d items).", #catalog.itemIDs))
-	end
-
-	if runtime.queuedRefreshAfterUpdate then
-		runtime.queuedRefreshAfterUpdate = false
-		addon.QueueSearchCacheRefresh("post_update")
-	end
-end
-
-local function failTask(task, message)
-	runtime.task = nil
-	runtime.updating = false
-	runtime.lastError = tostring(message)
-
-	if not task.silent then
-		print("|cffff7f00ItemScore:|r search cache update failed: " .. runtime.lastError)
-	end
-
-	if runtime.queuedRefreshAfterUpdate then
-		runtime.queuedRefreshAfterUpdate = false
-		addon.QueueSearchCacheRefresh("post_update_error")
-	end
-end
-
-local updateFrame = CreateFrame("Frame")
-local function updateFrameOnUpdate(self)
-	local task = runtime.task
-	if not task then
-		self:SetScript("OnUpdate", nil)
-		return
-	end
-
-	local startMs = nowMillis()
-	local ok, doneOrErr = pcall(processTask, task, task.opsBudget)
-	local elapsedMs = nowMillis() - startMs
-	task.opsBudget = tuneBudget(task.opsBudget, elapsedMs, task.targetMs)
-
-	if not ok then
-		failTask(task, doneOrErr)
-		self:SetScript("OnUpdate", nil)
-		return
-	end
-
-	if doneOrErr then
-		finishTask(task)
-		self:SetScript("OnUpdate", nil)
-	end
-end
-
-function addon.RegisterSearchProvider(providerKey, provider)
-	assert(type(providerKey) == "string" and providerKey ~= "", "providerKey missing")
-	assert(type(provider) == "table", "provider missing")
-	if providers[providerKey] then
-		providers[providerKey] = provider
-		return
-	end
-	providers[providerKey] = provider
-	providerOrder[#providerOrder + 1] = providerKey
-end
-
-function addon.GetSearchSourceSettings()
-	return ensureSettings()
-end
-
-function addon.SetSearchSourceOption(optionKey, value)
-	local settings = ensureSettings()
-
-	if optionKey == "searchMaxRequiredLevel" then
-		local numeric = math.floor(tonumber(value) or 0)
-		if numeric < 0 then numeric = 0 end
-		if numeric > 80 then numeric = 80 end
-		local changed = false
-		if settings.searchMaxRequiredLevel ~= numeric then
-			settings.searchMaxRequiredLevel = numeric
-			changed = true
-		end
-		if settings.searchMaxRequiredLevelUserSet ~= true then
-			settings.searchMaxRequiredLevelUserSet = true
-			changed = true
-		end
-		return changed
-	end
-
-	if optionKey == "atlasDungeonMaxMythicLevel" then
-		local numeric = normalizeAtlasDungeonMaxMythicLevel(value)
-		if settings.atlasDungeonMaxMythicLevel == numeric then return false end
-		settings.atlasDungeonMaxMythicLevel = numeric
-		runtime.forceRefresh = true
-		return true
-	end
-
-	if optionKey == "atlasRaidMaxDifficulty" then
-		local numeric = normalizeAtlasRaidMaxDifficulty(value)
-		if settings.atlasRaidMaxDifficulty == numeric then return false end
-		settings.atlasRaidMaxDifficulty = numeric
-		runtime.forceRefresh = true
-		return true
-	end
-
-	if optionKey == "atlasDungeon" then
-		return false
-	end
-
-	if optionKey == "atlasRaid" then
-		local changed = addon.SetAllAtlasLootRaidsEnabled(value)
-		return changed
-	end
-
-	if settings[optionKey] == nil then return false end
-	local boolValue = value and true or false
-	if settings[optionKey] == boolValue then return false end
-	settings[optionKey] = boolValue
-	runtime.forceRefresh = true
-	return true
-end
-
-function addon.SetAtlasLootPlaceEnabled(placeName, enabled)
-	local clean = stripColorCodes(placeName)
-	if not clean then return false end
-
-	local settings = ensureSettings()
-	local disabledPlaces = settings.atlasDisabledPlaces
-	local current = disabledPlaces[clean] and true or false
-	local targetDisabled = not enabled
-	if current == targetDisabled then return false end
-
-	disabledPlaces[clean] = targetDisabled or nil
-	runtime.forceRefresh = true
-	return true
-end
-
-function addon.GetDisabledAtlasLootPlaces()
-	local settings = ensureSettings()
-	local list = {}
-	for placeName, disabled in pairs(settings.atlasDisabledPlaces) do
-		if disabled then list[#list + 1] = placeName end
-	end
-	table.sort(list)
-	return list
-end
-
-function addon.SetAtlasLootRaidEnabled(raidName, enabled)
-	local clean = stripColorCodes(raidName)
-	if not clean then return false end
-
-	local settings = ensureSettings()
-	local disabledRaids = settings.atlasDisabledRaids
-	local current = disabledRaids[clean] and true or false
-	local targetDisabled = not enabled
-	if current == targetDisabled then return false end
-
-	disabledRaids[clean] = targetDisabled or nil
-	runtime.forceRefresh = true
-	return true
-end
-
-function addon.GetDisabledAtlasLootRaids()
-	local settings = ensureSettings()
-	local list = {}
-	for raidName, disabled in pairs(settings.atlasDisabledRaids) do
-		if disabled then list[#list + 1] = raidName end
-	end
-	table.sort(list)
-	return list
-end
-
--- Persists one reputation source toggle without changing its expansion filter.
-function addon.SetAtlasLootFactionEnabled(factionName, enabled)
-	local clean = stripColorCodes(factionName)
-	if not clean then return false end
-
-	local settings = ensureSettings()
-	local disabledFactions = settings.atlasDisabledFactions
-	local current = disabledFactions[clean] and true or false
-	local targetDisabled = not enabled
-	if current == targetDisabled then return false end
-
-	disabledFactions[clean] = targetDisabled or nil
-	runtime.forceRefresh = true
-	return true
-end
-
--- Persists one crafting profession toggle within its owning expansion.
-function addon.SetAtlasLootCraftingEnabled(expansionKey, sourceName, enabled)
-	expansionKey = trim(tostring(expansionKey or ""))
-	local clean = stripColorCodes(sourceName)
-	if not expansionKey or not clean then return false end
-
-	local settings = ensureSettings()
-	local disabledByExpansion = settings.atlasDisabledCrafting
-	local disabledSources = disabledByExpansion[expansionKey]
-	local current = type(disabledSources) == "table" and disabledSources[clean] and true or false
-	local targetDisabled = not enabled
-	if current == targetDisabled then return false end
-
-	if targetDisabled then
-		disabledSources = type(disabledSources) == "table" and disabledSources or {}
-		disabledSources[clean] = true
-		disabledByExpansion[expansionKey] = disabledSources
-	elseif type(disabledSources) == "table" then
-		disabledSources[clean] = nil
-		if next(disabledSources) == nil then disabledByExpansion[expansionKey] = nil end
-	end
-	runtime.forceRefresh = true
-	return true
-end
-
-local function getAtlasLootSourceChoices()
-	local provider = providers["AtlasLoot"]
-	if not provider then return {} end
-	local getChoices = provider.GetSourceChoices or provider.GetRaidChoices
-	if type(getChoices) ~= "function" then return {} end
-
-	local settings = ensureSettings()
-	local ok, sourceChoices = pcall(getChoices, settings)
-	if not ok or type(sourceChoices) ~= "table" then
-		return {}
-	end
-	return sourceChoices
-end
-
--- Returns all selectable AtlasLoot source categories grouped by expansion.
-function addon.GetAtlasLootSourceChoices()
-	return getAtlasLootSourceChoices()
-end
-
--- Compatibility for callers that predate Tier Set and Reputation categories.
-function addon.GetAtlasLootRaidChoices()
-	return getAtlasLootSourceChoices()
-end
-
--- Returns the highest AtlasLoot Mythic+ dungeon level supported by the loaded provider.
-function addon.GetAtlasLootMaxDungeonMythicLevel()
-	local provider = providers["AtlasLoot"]
-	if provider and type(provider.GetMaxDungeonMythicLevel) == "function" then
-		local ok, maxLevel = pcall(provider.GetMaxDungeonMythicLevel)
-		maxLevel = ok and normalizeAtlasDungeonMaxMythicLevel(maxLevel) or nil
-		if maxLevel then return maxLevel end
-	end
-	return MAX_DUNGEON_MYTHIC_LEVEL_FALLBACK
-end
-
--- Returns selectable maximum raid difficulties in ascending order.
-function addon.GetAtlasLootRaidDifficultyChoices()
-	local choices = {}
-	for _, choice in ipairs(RAID_DIFFICULTY_CHOICES) do
-		choices[#choices + 1] = {
-			value = choice.value,
-			label = choice.label,
-		}
-	end
-	return choices
-end
-
--- Applies the raid-style bulk toggle to raids and Classic Tier 1-3 sources.
-function addon.SetAllAtlasLootRaidsEnabled(enabled)
-	local settings = ensureSettings()
-	local raidChoices = getAtlasLootSourceChoices()
-	if type(raidChoices) ~= "table" then return false end
-
-	local changed = false
-	for _, group in ipairs(raidChoices) do
-		local raidNames = {}
-		for _, raidName in ipairs(group.raids or {}) do raidNames[#raidNames + 1] = raidName end
-		for _, tierSetName in ipairs(group.tierSets or {}) do raidNames[#raidNames + 1] = tierSetName end
-		for _, raidName in ipairs(raidNames) do
-			local current = settings.atlasDisabledRaids[raidName] and true or false
-			local target = not enabled
-			if current ~= target then
-				settings.atlasDisabledRaids[raidName] = target or nil
-				changed = true
-			end
-		end
-	end
-
-	if changed then
-		runtime.forceRefresh = true
-	end
-
-	return changed
-end
-
--- Applies a bulk toggle only to loaded reputation sources.
-function addon.SetAllAtlasLootFactionsEnabled(enabled)
-	local settings = ensureSettings()
-	local sourceChoices = getAtlasLootSourceChoices()
-	if type(sourceChoices) ~= "table" then return false end
-
-	local changed = false
-	for _, group in ipairs(sourceChoices) do
-		for _, factionName in ipairs(group.factions or {}) do
-			local current = settings.atlasDisabledFactions[factionName] and true or false
-			local target = not enabled
-			if current ~= target then
-				settings.atlasDisabledFactions[factionName] = target or nil
-				changed = true
-			end
-		end
-	end
-
-	if changed then
-		runtime.forceRefresh = true
-	end
-
-	return changed
-end
-
--- Applies a bulk toggle only to loaded crafting professions, independently per expansion.
-function addon.SetAllAtlasLootCraftingEnabled(enabled)
-	local settings = ensureSettings()
-	local sourceChoices = getAtlasLootSourceChoices()
-	if type(sourceChoices) ~= "table" then return false end
-
-	local changed = false
-	for _, group in ipairs(sourceChoices) do
-		local expansionKey = tostring(group.key or "")
-		local disabledSources = settings.atlasDisabledCrafting[expansionKey]
-		for _, sourceName in ipairs(group.crafting or {}) do
-			local current = type(disabledSources) == "table" and disabledSources[sourceName] and true or false
-			local target = not enabled
-			if current ~= target then
-				if target then
-					disabledSources = type(disabledSources) == "table" and disabledSources or {}
-					disabledSources[sourceName] = true
-					settings.atlasDisabledCrafting[expansionKey] = disabledSources
-				else
-					disabledSources[sourceName] = nil
-				end
-				changed = true
-			end
-		end
-		if type(disabledSources) == "table" and next(disabledSources) == nil then
-			settings.atlasDisabledCrafting[expansionKey] = nil
-		end
-	end
-
-	if changed then
-		runtime.forceRefresh = true
-	end
-
-	return changed
-end
-
-function addon.GetKnownSearchPlaces()
-	local cache = ensureCache()
-	local places = {}
-	local byPlace = cache.catalog and cache.catalog.byPlace or {}
-	for placeName in pairs(byPlace) do
-		places[#places + 1] = placeName
-	end
-	table.sort(places)
-	return places
-end
-
-function addon.RefreshSearchCache(forceRefresh, silent)
-	local settings = ensureSettings()
-	local cache = ensureCache()
-
-	if runtime.updating then
-		if forceRefresh then
-			runtime.forceRefresh = true
-			runtime.queuedRefreshAfterUpdate = true
-		end
-		return false, "busy"
-	end
-
-	if not forceRefresh and not isCacheStale(settings, cache) then
-		return false, "fresh"
-	end
-
-	local addMapping, finalizeCollector = createCollector()
-	runtime.task = {
-		settings = snapshotSettings(settings),
-		addMapping = addMapping,
-		finalizeCollector = finalizeCollector,
-		providerStats = {},
-		providerIndex = 1,
-		activeProvider = nil,
-		currentProviderKey = nil,
-		opsBudget = 220,
-		targetMs = 6,
-		silent = silent and true or false,
-	}
-	runtime.updating = true
-	runtime.lastError = nil
-
-	updateFrame:SetScript("OnUpdate", updateFrameOnUpdate)
-	return true, "started"
-end
-
-function addon.QueueSearchCacheRefresh(reason)
-	runtime.forceRefresh = true
-	if runtime.updating then
-		runtime.queuedRefreshAfterUpdate = true
-		return
-	end
-	if runtime.pendingRefresh then return end
-
-	runtime.pendingRefresh = true
-	scheduleAfter(2, function()
-		runtime.pendingRefresh = false
-		addon.RefreshSearchCache(true, true)
-	end)
+function addon.SetSearchSourceEnabled(key, enabled)
+    initialize()
+    assert(type(key) == "string" and key ~= "", "Source key required")
+    settings.disabledSources[key] = not enabled or nil
+    addon.QueueSearchCacheRefresh()
 end
 
 function addon.GetSearchCacheStatus()
-	local settings = ensureSettings()
-	local cache = ensureCache()
-	local stale = isCacheStale(settings, cache)
-	local catalog = cache.catalog or EMPTY_CATALOG
-
-	local providerMeta = {}
-	local availableProviderCount = 0
-	local enabledProviderCount = 0
-	for _, providerKey in ipairs(providerOrder) do
-		local provider = providers[providerKey]
-		local enabled = providerEnabled(providerKey, settings)
-		if enabled then enabledProviderCount = enabledProviderCount + 1 end
-
-		local available = false
-		if provider and type(provider.IsAvailable) == "function" then
-			local ok, isAvailable = pcall(provider.IsAvailable, settings)
-			available = ok and (isAvailable ~= false)
-		elseif provider then
-			available = true
-		end
-		if available then availableProviderCount = availableProviderCount + 1 end
-
-		local adapterInfo = nil
-		if provider and type(provider.GetAdapterInfo) == "function" then
-			local ok, info = pcall(provider.GetAdapterInfo, settings)
-			if ok and type(info) == "table" then
-				adapterInfo = info
-			end
-		end
-
-		providerMeta[providerKey] = {
-			enabled = enabled,
-			available = available,
-			last = cache.providerStats[providerKey],
-			adapter = adapterInfo and adapterInfo.adapter or nil,
-			adapterLabel = adapterInfo and adapterInfo.label or nil,
-			reason = adapterInfo and adapterInfo.reason or nil,
-			mainInstalled = adapterInfo and adapterInfo.mainInstalled or nil,
-			mainLoaded = adapterInfo and adapterInfo.mainLoaded or nil,
-			starterDBInstalled = adapterInfo and adapterInfo.starterDBInstalled or nil,
-			customImportInstalled = adapterInfo and adapterInfo.customImportInstalled or nil,
-		}
-	end
-
-	return {
-		updating = runtime.updating,
-		stale = stale,
-		settingsChanged = isCacheSettingsMismatched(settings, cache),
-		lastBuildAt = cache.lastBuildAt,
-		itemCount = #(catalog.itemIDs or {}),
-		lastError = runtime.lastError,
-		enabledProviderCount = enabledProviderCount,
-		availableProviderCount = availableProviderCount,
-		providers = providerMeta,
-		currentProvider = runtime.task and runtime.task.currentProviderKey or nil,
-		opsBudget = runtime.task and runtime.task.opsBudget or nil,
-		queuedRefresh = runtime.queuedRefreshAfterUpdate,
-	}
+    initialize()
+    local available = addon.AtlasLootSource.IsAvailable()
+    local changed = cache.fingerprint ~= fingerprint()
+    return {
+        updating = worker ~= nil or rebuildQueued,
+        stale = changed or lastError ~= nil,
+        settingsChanged = changed,
+        itemCount = cache.catalog and #cache.catalog.itemIDs or 0,
+        lastError = lastError,
+        enabledProviderCount = settings.useAtlasLoot and 1 or 0,
+        availableProviderCount = available and 1 or 0,
+        providers = { AtlasLoot = { enabled = settings.useAtlasLoot, available = available, adapterLabel = "Forever " .. addon.AtlasLootSource.GetVersion() } },
+    }
 end
 
+-- Stale results from another character/filter/version must never leak into a new search.
 function addon.GetSearchCatalog()
-	local settings = ensureSettings()
-	local cache = ensureCache()
-
-	local settingsChanged = isCacheSettingsMismatched(settings, cache)
-	local stale = isCacheStale(settings, cache)
-	if stale and not settingsChanged and not runtime.updating then
-		addon.QueueSearchCacheRefresh("stale")
-	end
-
-	if settingsChanged then
-		return EMPTY_CATALOG, addon.GetSearchCacheStatus()
-	end
-
-	return cache.catalog or EMPTY_CATALOG, addon.GetSearchCacheStatus()
+    local status = addon.GetSearchCacheStatus()
+    return not status.settingsChanged and cache.catalog or EMPTY, status
 end
 
-local refreshEvents = {
-	["LootCollector"] = true,
-	["LootCollector_StarterDB"] = true,
-	["LootCollector_CustomImport"] = true,
-	["AtlasLoot"] = true,
-	["AtlasLoot_OriginalWoW"] = true,
-	["AtlasLoot_BurningCrusade"] = true,
-	["AtlasLoot_WrathoftheLichKing"] = true,
-}
+local function build()
+    local identity = fingerprint()
+    local disabled = {}
+    for key, value in pairs(settings.disabledSources) do disabled[key] = value end
+    local catalog = { itemIDs = {}, itemSources = {}, builtAt = time(), mappingCount = 0 }
+    local newChoices, seen = {}, {}
+    local operations = 0
+    local function checkpoint()
+        operations = operations + 1
+        if operations >= 100 then operations = 0; coroutine.yield() end
+    end
+    local function emit(id, source)
+        assert(type(id) == "number" and id > 0 and id == math.floor(id), "Source emitted an invalid item ID")
+        if not catalog.itemSources[id] then
+            catalog.itemIDs[#catalog.itemIDs + 1] = id
+            catalog.itemSources[id], seen[id] = {}, {}
+        end
+        local key = source.place .. "\n" .. source.source .. "\n" .. (source.difficultyLabel or "")
+        if not seen[id][key] then
+            seen[id][key] = true
+            table.insert(catalog.itemSources[id], source)
+            catalog.mappingCount = catalog.mappingCount + 1
+        end
+    end
+    if settings.useAtlasLoot then
+        addon.AtlasLootSource.Scan(disabled, function(choice) newChoices[#newChoices + 1] = choice end, emit, checkpoint)
+    end
+    table.sort(catalog.itemIDs)
+    table.sort(newChoices, function(a, b)
+        if a.group == b.group then return a.label < b.label end
+        return a.group < b.group
+    end)
+    -- Configuration may change while yielding. Only commit a complete, matching snapshot.
+    if identity ~= fingerprint() then refreshAgain = true; return end
+    cache.catalog, cache.fingerprint, cache.choices = catalog, identity, newChoices
+    choices, lastError = newChoices, nil
+end
 
-local sourceEventFrame = CreateFrame("Frame")
-sourceEventFrame:RegisterEvent("PLAYER_LOGIN")
-sourceEventFrame:RegisterEvent("ADDON_LOADED")
-sourceEventFrame:SetScript("OnEvent", function(_, event, arg1)
-	if event == "PLAYER_LOGIN" then
-		addon.QueueSearchCacheRefresh("login")
-		return
-	end
+local function update()
+    if InCombatLockdown() then return end
+    local started = debugprofilestop()
+    repeat
+        local ok, err = coroutine.resume(worker)
+        if not ok then
+            lastError = tostring(err)
+            print("ItemScore: catalogue update failed: " .. lastError)
+            worker = nil
+        elseif coroutine.status(worker) == "dead" then
+            worker = nil
+        end
+    until not worker or debugprofilestop() - started >= 4
+    if not worker then
+        driver:SetScript("OnUpdate", nil)
+        if refreshAgain then refreshAgain = false; addon.QueueSearchCacheRefresh() end
+        notify()
+    end
+end
 
-	if event == "ADDON_LOADED" and refreshEvents[arg1] then
-		addon.QueueSearchCacheRefresh("addon_loaded:" .. tostring(arg1))
-	end
+function addon.RefreshSearchCache(_, silent)
+    initialize()
+    if worker then refreshAgain = true; return false end
+    if InCombatLockdown() then rebuildQueued = true; return false end
+    rebuildQueued, lastError = false, nil
+    worker = coroutine.create(build)
+    driver:SetScript("OnUpdate", update)
+    if not silent then print("ItemScore: rebuilding AtlasLoot Forever catalogue.") end
+    return true
+end
+
+function addon.QueueSearchCacheRefresh()
+    if worker then refreshAgain = true; return end
+    if rebuildQueued then return end
+    rebuildQueued = true
+    C_Timer.After(0.2, function()
+        if rebuildQueued and not InCombatLockdown() then addon.RefreshSearchCache(true, true) end
+    end)
+end
+
+driver:RegisterEvent("PLAYER_LOGIN")
+driver:RegisterEvent("PLAYER_REGEN_ENABLED")
+driver:RegisterEvent("ADDON_LOADED")
+driver:SetScript("OnEvent", function(_, event, name)
+    if event == "ADDON_LOADED" and name == addonName then
+        settings = nil
+        initialize()
+    elseif event == "PLAYER_REGEN_ENABLED" and rebuildQueued then
+        addon.RefreshSearchCache(true, true)
+    elseif event == "PLAYER_LOGIN"
+        or (event == "ADDON_LOADED" and name == "AtlasLootClassic") then
+        addon.QueueSearchCacheRefresh()
+    end
 end)

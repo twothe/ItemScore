@@ -1,17 +1,17 @@
-## Interface: 30300
+## Interface: 16001
 ## Title: ItemScore
-## Notes: Gear scoring and search addon using optional LootCollector/AtlasLoot sources
+## Notes: Weighted item ranking and AtlasLoot Forever loot search
 ## Author: TwoThe
-## Version: 3.16
+## Version: 5.0.0
+## OptionalDeps: AtlasLootClassic
 ## SavedVariables: ItemScoreCacheDB
 ## SavedVariablesPerCharacter: ItemScoreData
 
 ItemScoreUtil.lua
-ItemScoreSources.lua
-ItemScoreSourceLootCollector.lua
-ItemScoreSourceAtlasLoot.lua
-ItemScore.lua
 ItemScoreQuery.lua
+ItemScoreSourceAtlasLoot.lua
+ItemScoreSources.lua
+ItemScore.lua
 ItemScoreEquipment.lua
 ItemScoreUI.lua
 ItemScoreSearch.lua

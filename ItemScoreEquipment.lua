@@ -25,6 +25,7 @@ local SLOTNAME_TO_ID = setmetatable({}, {
 })
 
 local function invalidateEquipCache() equipCache = {} end
+addon.Query.Subscribe(invalidateEquipCache)
 
 ------------------------------------------------------------
 -- Slot mapping (non-weapon)
